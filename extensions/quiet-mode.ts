@@ -139,6 +139,10 @@ function setLevel(level: QuietLevel): void {
 let overridableNames: Set<string> | undefined;
 /** What the current session registry currently holds from this extension. */
 let toolsRegisteredAs: "quiet" | "plain" | undefined;
+/** Names registered by this extension, so reload-time registration needs no sampling. */
+let registeredNames: string[] = [];
+/** True when registration happened at factory time (no cwd/trust available yet). */
+let toolsNeedCtxRefresh = false;
 
 // ---------------------------------------------------------------------------
 // Persistence
@@ -408,10 +412,11 @@ function getOverridableNames(pi: ExtensionAPI): Set<string> {
  */
 function ensureTools(pi: ExtensionAPI, ctx: ExtensionContext, level: QuietLevel): void {
 	const want: "quiet" | "plain" = level === "off" ? "plain" : "quiet";
-	if (toolsRegisteredAs === want) return;
+	const needsRefresh = want === "quiet" && toolsNeedCtxRefresh;
+	if (toolsRegisteredAs === want && !needsRefresh) return;
 	if (want === "plain" && toolsRegisteredAs === undefined) return; // fresh registry: nothing to restore
 
-	const names = getOverridableNames(pi);
+	const names = registeredNames.length > 0 ? registeredNames : [...getOverridableNames(pi)];
 	const definitions = buildDefinitions(ctx.cwd, ctx.isProjectTrusted());
 	for (const name of names) {
 		const def = definitions[name];
@@ -423,7 +428,27 @@ function ensureTools(pi: ExtensionAPI, ctx: ExtensionContext, level: QuietLevel)
 			pi.registerTool(def);
 		}
 	}
+	registeredNames = names;
 	toolsRegisteredAs = want;
+	toolsNeedCtxRefresh = false;
+}
+
+/**
+ * Register quiet tools while the extension factory runs. /reload rebuilds the chat
+ * after loading extensions but before session_start, so registering only there left
+ * historical tool rows rendered by the plain builtins (visible boxes that could not
+ * be hidden). Registering at factory time keeps reloaded history quiet.
+ */
+function registerQuietToolsAtFactory(pi: ExtensionAPI): void {
+	const names = Object.keys(SUMMARIES);
+	const definitions = buildDefinitions(process.cwd(), false);
+	for (const name of names) {
+		const def = definitions[name];
+		if (def) pi.registerTool(makeQuietDefinition(name, def, SUMMARIES[name]!));
+	}
+	registeredNames = names;
+	toolsRegisteredAs = "quiet";
+	toolsNeedCtxRefresh = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +659,15 @@ export default async function (pi: ExtensionAPI) {
 	debugLog(`factory: level=${getLevel()}`);
 	patchAssistantMessages();
 	await loadBuiltInRenderers();
+
+	// Register before /reload rebuilds the chat so historical tool rows stay quiet.
+	if (getLevel() !== "off") {
+		try {
+			registerQuietToolsAtFactory(pi);
+		} catch (error) {
+			debugLog(`factory tool registration failed: ${String(error)}`);
+		}
+	}
 
 	pi.on("session_start", async (_event, ctx) => {
 		getOverridableNames(pi);
