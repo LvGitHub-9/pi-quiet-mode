@@ -79,7 +79,7 @@ const PATCH_FLAG_KEY = Symbol.for("pi.quiet-mode.patched");
 // implementation always runs even though the wrapper itself is installed once.
 const FILTER_KEY = Symbol.for("pi.quiet-mode.filter");
 // Only used to upgrade shells from older builds that hard-coded their logic.
-const PATCH_VERSION = 3;
+const PATCH_VERSION = 4;
 
 const LEVEL_ORDER: QuietLevel[] = ["off", "full", "partial"];
 
@@ -251,6 +251,12 @@ type BuiltInRenderer = {
 let builtInRenderers: Record<string, BuiltInRenderer> = {};
 const loggedRenderPaths = new Set<string>();
 
+function logRenderPath(pathKey: string): void {
+	if (loggedRenderPaths.has(pathKey)) return;
+	loggedRenderPaths.add(pathKey);
+	debugLog(`expanded render path: ${pathKey}`);
+}
+
 async function loadBuiltInRenderers(): Promise<void> {
 	try {
 		const entry = join(getPackageDir(), "dist", "core", "tools", "renderers", "index.js");
@@ -308,31 +314,38 @@ function makeQuietDefinition(
 			const renderer = builtInRenderers[name];
 			const builtInCall = renderer?.renderCall;
 			const builtInResult = renderer?.renderResult;
-			const pathKey = `${name}:${builtInResult ? "builtin" : "fallback"}`;
-			if (!loggedRenderPaths.has(pathKey)) {
-				loggedRenderPaths.add(pathKey);
-				debugLog(`expanded render path: ${pathKey}`);
-			}
-			if (name !== "edit" && builtInResult) {
-				const bg = options.isPartial
-					? "toolPendingBg"
-					: context.isError
-						? "toolErrorBg"
-						: "toolSuccessBg";
+			const bg = options.isPartial
+				? "toolPendingBg"
+				: context.isError
+					? "toolErrorBg"
+					: "toolSuccessBg";
+
+			// Fallback that still looks native: same background box, summary + output.
+			const boxedFallback = (): unknown => {
 				const box = new Box(1, 1, (text: string) => theme.bg(bg, text));
-				if (builtInCall) box.addChild(builtInCall(context.args, theme, context) as never);
-				box.addChild(builtInResult(result, options, theme, context) as never);
-				return box as never;
-			}
-			if (name === "edit" && builtInResult) {
-				return builtInResult(result, options, theme, context) as never;
+				box.addChild(new Text(summary(context.args, theme), 0, 0));
+				box.addChild(new Text(renderOutput(result, theme), 0, 0));
+				return box;
+			};
+
+			try {
+				if (name === "edit" && builtInResult) {
+					logRenderPath(`${name}:builtin`);
+					return builtInResult(result, options, theme, context) as never;
+				}
+				if (builtInResult) {
+					logRenderPath(`${name}:builtin`);
+					const box = new Box(1, 1, (text: string) => theme.bg(bg, text));
+					if (builtInCall) box.addChild(builtInCall(context.args, theme, context) as never);
+					box.addChild(builtInResult(result, options, theme, context) as never);
+					return box as never;
+				}
+			} catch (error) {
+				debugLog(`expanded render failed for ${name}: ${String(error)}`);
 			}
 
-			// Fallback: plain text rendering when the built-in renderers are unavailable.
-			const fallback = new Container();
-			fallback.addChild(new Text(summary(context.args, theme), 0, 0));
-			fallback.addChild(new Text(renderOutput(result, theme), 0, 0));
-			return fallback as never;
+			logRenderPath(`${name}:fallback`);
+			return boxedFallback() as never;
 		},
 	};
 }
@@ -500,10 +513,12 @@ function patchAssistantMessages(): void {
 	try {
 		const proto = (AssistantMessageComponent as unknown as { prototype?: Record<PropertyKey, unknown> })
 			?.prototype;
-		if (!proto || typeof proto.updateContent !== "function" || proto[PATCH_FLAG_KEY] === PATCH_VERSION) return;
+		if (!proto || typeof proto.updateContent !== "function") return;
+		const current = proto.updateContent as { [PATCH_FLAG_KEY]?: number };
+		if (current[PATCH_FLAG_KEY] === PATCH_VERSION) return;
 
-		const original = proto.updateContent as (...args: unknown[]) => void;
-		proto.updateContent = function (this: unknown, ...args: unknown[]) {
+		const original = current as unknown as (...args: unknown[]) => void;
+		const shell = function (this: unknown, ...args: unknown[]) {
 			// Stale wrappers from older builds are still in the chain and destroy data
 			// (they strip spacer rows before the current filter runs). Mask the level as
 			// "off" while the inner chain executes so every old level-aware wrapper
@@ -518,6 +533,8 @@ function patchAssistantMessages(): void {
 			const filter = (globalThis as Record<PropertyKey, unknown>)[FILTER_KEY];
 			if (typeof filter === "function") (filter as (component: unknown) => void)(this);
 		};
+		(shell as unknown as Record<PropertyKey, unknown>)[PATCH_FLAG_KEY] = PATCH_VERSION;
+		proto.updateContent = shell;
 		proto[PATCH_FLAG_KEY] = PATCH_VERSION;
 		debugLog(`patch installed: class=${AssistantMessageComponent?.name} version=${PATCH_VERSION}`);
 	} catch {
