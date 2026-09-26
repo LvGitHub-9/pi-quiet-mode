@@ -273,7 +273,8 @@ type BuiltInRenderer = {
 
 let builtInRenderers: Record<string, BuiltInRenderer> = {};
 const loggedRenderPaths = new Set<string>();
-const tracedExpansions = new Set<string>();
+/** Last logged expansion state per tool call, so every transition is traced. */
+const tracedExpansions = new Map<string, string>();
 
 // Ctrl+O cycle in quiet modes: 0 = tool rows hidden, 1 = only the most recent
 // batch of tool calls expanded, 2 = all tool rows expanded.
@@ -400,10 +401,11 @@ function makeQuietDefinition(
 		const renderer = builtInRenderers[name];
 			const builtInCall = renderer?.renderCall;
 			const builtInResult = renderer?.renderResult;
-			const traceKey = `${name}#${context.toolCallId} expanded=${options.expanded}`;
-			if (!tracedExpansions.has(traceKey)) {
-				tracedExpansions.add(traceKey);
-				debugLog(`tool ${traceKey}`);
+			const traceKey = `${name}#${context.toolCallId}`;
+			const traceState = `level=${getLevel()} expanded=${String(context.expanded)} shown=${String(isToolShown(context.toolCallId, context.expanded))}`;
+			if (tracedExpansions.get(traceKey) !== traceState) {
+				tracedExpansions.set(traceKey, traceState);
+				debugLog(`tool ${traceKey} ${traceState}`);
 			}
 			const bg = options.isPartial
 				? "toolPendingBg"
