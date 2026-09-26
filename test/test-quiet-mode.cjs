@@ -302,6 +302,30 @@ const bashCtx = {
     )
     .render(100);
   check("expanded result uses built-in rendering", expandedRows.length > 0, `rows=${expandedRows.length}`);
+
+  // 回归：the tool slot is rendered collapsed first (our empty Container lands in
+  // context.lastComponent). Expanding must not throw when builtin renderers reuse it.
+  let expandedAfterCollapsed = null;
+  try {
+    const collapsedCall = readDef.renderCall({ path: "/tmp/a.txt" }, theme, makeRenderCtx(false, { path: "/tmp/a.txt" }));
+    const reuseCtx = makeRenderCtx(true, { path: "/tmp/a.txt" });
+    reuseCtx.lastComponent = collapsedCall;
+    expandedAfterCollapsed = readDef
+      .renderResult(
+        { content: [{ type: "text", text: "line1\nline2" }], details: undefined },
+        { expanded: true, isPartial: false },
+        theme,
+        reuseCtx,
+      )
+      .render(100);
+  } catch (error) {
+    expandedAfterCollapsed = { error: String(error), length: -1 };
+  }
+  check(
+    "expanded render survives a prior collapsed render",
+    !!expandedAfterCollapsed && !expandedAfterCollapsed.error && expandedAfterCollapsed.length > 0,
+    `rows=${expandedAfterCollapsed?.length ?? "null"}${expandedAfterCollapsed?.error ? " " + expandedAfterCollapsed.error : ""}`,
+  );
   const errorRows = readDef
     .renderResult(
       { content: [{ type: "text", text: "ENOENT" }], details: undefined },

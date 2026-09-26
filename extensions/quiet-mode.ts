@@ -295,7 +295,11 @@ function makeQuietDefinition(
 			// The edit renderer draws its own box; every other tool composes call and
 			// result inside the result renderer so they share one native-looking box.
 			const builtIn = builtInRenderers[name]?.renderCall;
-			if (name === "edit" && builtIn) return builtIn(args, theme, context) as never;
+			if (name === "edit" && builtIn) {
+				// Built-in renderers reuse context.lastComponent and call setText() on it;
+				// our collapsed call component is an empty Container, so mask it.
+				return builtIn(args, theme, { ...context, lastComponent: undefined }) as never;
+			}
 			return new Container();
 		},
 		renderResult(result, options, theme, context) {
@@ -329,15 +333,19 @@ function makeQuietDefinition(
 			};
 
 			try {
+				// Built-in renderers reuse context.lastComponent (and its setText method);
+				// after our empty collapsed render that slot holds a Container, which made
+				// them throw and fall back to plain text. Mask it for a fresh component.
+				const builtinContext = { ...context, lastComponent: undefined };
 				if (name === "edit" && builtInResult) {
 					logRenderPath(`${name}:builtin`);
-					return builtInResult(result, options, theme, context) as never;
+					return builtInResult(result, options, theme, builtinContext) as never;
 				}
 				if (builtInResult) {
 					logRenderPath(`${name}:builtin`);
 					const box = new Box(1, 1, (text: string) => theme.bg(bg, text));
-					if (builtInCall) box.addChild(builtInCall(context.args, theme, context) as never);
-					box.addChild(builtInResult(result, options, theme, context) as never);
+					if (builtInCall) box.addChild(builtInCall(context.args, theme, builtinContext) as never);
+					box.addChild(builtInResult(result, options, theme, builtinContext) as never);
 					return box as never;
 				}
 			} catch (error) {
