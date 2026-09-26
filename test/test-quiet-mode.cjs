@@ -52,6 +52,7 @@ fs.writeFileSync(LEVEL_FILE, JSON.stringify({ level: "off" }, null, 2));
 
 const { createJiti } = require(path.join(PKG, "node_modules/jiti/lib/jiti.cjs"));
 const { AssistantMessageComponent, initTheme } = require(path.join(PKG, "dist/index.js"));
+const { visibleWidth } = require(path.join(PKG, "node_modules/@earendil-works/pi-tui/dist/index.js"));
 initTheme();
 
 const jiti = createJiti(__filename, {
@@ -187,6 +188,27 @@ const bashCtx = {
     console.log(`${cond ? "PASS" : "FAIL"}  ${name}${extra ? "  " + extra : ""}`);
     if (!cond) failed = true;
   };
+
+  // 回归：模拟最早 2 级版留下的补丁（用旧变量 pi.quiet-mode.enabled 控制，
+  // 会永久删除空行）。新版本必须在加载时把旧变量置 false 将其失效。
+  {
+    const LEGACY_KEY = Symbol.for("pi.quiet-mode.enabled");
+    globalThis[LEGACY_KEY] = true;
+    const proto = AssistantMessageComponent.prototype;
+    const previousUpdate = proto.updateContent;
+    proto.updateContent = function (...args) {
+      previousUpdate.apply(this, args);
+      if (globalThis[LEGACY_KEY] !== true) return;
+      if (Array.isArray(this.contentContainer?.children)) {
+        this.contentContainer.children = this.contentContainer.children.filter((child) => {
+          if ((child?.constructor?.name ?? "") === "Spacer") return false;
+          const text = child?.child?.text;
+          if (typeof text === "string" && visibleWidth(text) === 0) return false;
+          return true;
+        });
+      }
+    };
+  }
 
   // 回归：模拟旧版 v2 补丁（只处理 hasToolCalls，不管流式）已经挂在原型上。
   // 新版本必须在其之上重新安装委托壳，并保证最终过滤器是最新的。

@@ -512,6 +512,11 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 
 export default async function (pi: ExtensionAPI) {
 	setLevel(loadLevel());
+	// Legacy cleanup: very early builds used a boolean flag under a different key
+	// and kept stripping spacer rows whenever it was true — even in level 3. That
+	// leftover wrapper is still installed on the component prototype in long-lived
+	// sessions, so switch it off explicitly.
+	(globalThis as Record<PropertyKey, unknown>)[Symbol.for("pi.quiet-mode.enabled")] = false;
 	debugLog(`factory: level=${getLevel()}`);
 	patchAssistantMessages();
 	await loadBuiltInRenderers();
