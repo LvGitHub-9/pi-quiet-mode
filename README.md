@@ -14,6 +14,8 @@ Pi's default transcript shows every tool call, every result, and a `Thinking...`
 
 `/quiet` without an argument cycles `off → 1 → 2 → off`. The current level is shown in the status bar as `quiet:1` / `quiet:2` and is remembered across restarts.
 
+In quiet levels **`Ctrl+O` cycles tool visibility**: hidden → tools from the recent prompt(s) → all tools → hidden. `/quiet recent N` (1–20, default 1) sets how many recent user prompts count as "recent"; the status bar shows `tools:recent×N`.
+
 ## Install
 
 ```bash
@@ -54,8 +56,9 @@ No configuration needed. Start Pi and run `/quiet`.
 
 ## Extras
 
-- **`Ctrl+O`** (`app.tools.expand`) still expands every tool call and output at any level, and collapses them again.
-- **Persistence**: the level is stored in `<agent-dir>/quiet-mode.json` (`~/.pi/agent/quiet-mode.json` by default).
+- **`Ctrl+O`**: a reserved Pi shortcut, so extensions cannot register it. Quiet levels intercept the key through the terminal input listener and cycle **hidden → recent → all → hidden**. "Recent" covers every tool call made for the last `N` user prompts (`/quiet recent N`). Level 3 keeps Pi's native expand/collapse-all behavior.
+- **`Ctrl+T`** still toggles thinking blocks. In quiet levels the reveal only applies to the current session, so a reload renders old history clean again.
+- **Persistence**: level and recent-turn count are stored in `<agent-dir>/quiet-mode.json` (`~/.pi/agent/quiet-mode.json` by default).
 - **No behavior drift**: the extension recreates built-in tool definitions with the exact options the session uses — including `shellPath`, `shellCommandPrefix`, and `autoResizeImages` — so settings keep working. It only overrides tools that are still `builtin`; tools replaced by other extensions are never touched.
 - **Fail-soft internals patch**: Pi's message component always inserts spacer rows and leaves an ANSI-only row for a hidden thinking label, neither of which is removable through the public extension API. The extension carries a small, guarded patch (marked with `Symbol.for`, applied only while a quiet level is active) that filters those rows. If Pi's internals change, the patch silently no-ops and everything still renders normally.
 
@@ -86,7 +89,9 @@ The test runs the real extension through Pi's own `jiti` loader with a mocked AP
 
 - `/quiet` 不带参数循环切换：关闭 → 1 → 2 → 关闭
 - 状态栏显示当前档位（`quiet:1`、`quiet:2`），重启后保持
-- **`Ctrl+O`** 随时展开工具调用和完整输出，再按一次收起
+- **`Ctrl+O` 三档循环**（安静模式下）：全隐藏 → 最近 N 个用户轮次的工具 → 全部工具 → 全隐藏
+- **`/quiet recent 3`**：设置“最近”包含几个用户轮次（1–20，默认 1）；一批 = 一次用户输入触发的全部工具调用
+- **`Ctrl+T`** 偷看思考：仅本次会话有效，reload 后历史自动恢复干净
 - 工具报错始终保留一行红字，避免静默失败
 - 重新注册内置工具时会完整保留用户的设置（`shellPath` 等），不会影响 bash 正常运行
 

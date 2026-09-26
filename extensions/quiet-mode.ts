@@ -152,14 +152,15 @@ function stateFile(): string {
 	return join(getAgentDir(), "quiet-mode.json");
 }
 
-function loadState(): { level: QuietLevel; recentRounds: number } {
+function loadState(): { level: QuietLevel; recentTurns: number } {
 	let level: QuietLevel = "off";
-	let recentRounds = 1;
+	let recentTurns = 1;
 	try {
 		const data = JSON.parse(readFileSync(stateFile(), "utf-8")) as {
 			level?: unknown;
 			quiet?: unknown;
 			recentRounds?: unknown;
+			recentTurns?: unknown;
 		};
 		if (data.level === "off" || data.level === "full" || data.level === "partial") {
 			level = data.level;
@@ -169,20 +170,21 @@ function loadState(): { level: QuietLevel; recentRounds: number } {
 		} else if (data.quiet === false) {
 			level = "off";
 		}
-		if (typeof data.recentRounds === "number" && Number.isFinite(data.recentRounds)) {
-			recentRounds = Math.min(20, Math.max(1, Math.round(data.recentRounds)));
+		const storedTurns = data.recentTurns ?? data.recentRounds;
+		if (typeof storedTurns === "number" && Number.isFinite(storedTurns)) {
+			recentTurns = Math.min(20, Math.max(1, Math.round(storedTurns)));
 		}
 	} catch {
 		// Missing or invalid file: defaults.
 	}
-	return { level, recentRounds };
+	return { level, recentTurns };
 }
 
 function saveState(): void {
 	try {
 		const dir = getAgentDir();
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-		writeFileSync(stateFile(), JSON.stringify({ level: getLevel(), recentRounds }, null, 2), "utf-8");
+		writeFileSync(stateFile(), JSON.stringify({ level: getLevel(), recentTurns }, null, 2), "utf-8");
 	} catch {
 		// Persistence failure must not break the session.
 	}
@@ -278,8 +280,8 @@ const tracedExpansions = new Set<string>();
 type ToolCycle = 0 | 1 | 2;
 let toolCycle: ToolCycle = 0;
 let partialToolIds = new Set<string>();
-/** How many recent tool-call batches the "recent" cycle step expands. */
-let recentRounds = 1;
+/** How many recent user turns the "recent" cycle step expands. */
+let recentTurns = 1;
 
 function isToolShown(toolCallId: string): boolean {
 	if (toolCycle === 2) return true;
@@ -287,7 +289,10 @@ function isToolShown(toolCallId: string): boolean {
 	return false;
 }
 
-/** Tool call ids of the most recent `recentRounds` assistant tool-call batches. */
+/**
+ * Tool call ids belonging to the most recent `recentTurns` user turns. A turn
+ * starts at a user message and covers every assistant tool call after it.
+ */
 function computePartialToolIds(ctx: ExtensionContext): Set<string> {
 	const ids = new Set<string>();
 	try {
@@ -295,19 +300,29 @@ function computePartialToolIds(ctx: ExtensionContext): Set<string> {
 			type?: string;
 			message?: { role?: string; content?: unknown };
 		}>;
-		let batches = 0;
-		for (let i = branch.length - 1; i >= 0 && batches < recentRounds; i--) {
+		let turns = 0;
+		for (let i = branch.length - 1; i >= 0; i--) {
 			const entry = branch[i];
-			if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
-			const content = entry.message.content;
+			if (entry?.type !== "message") continue;
+			const role = entry.message?.role;
+			if (role === "user") {
+				turns++;
+				if (turns >= recentTurns) break;
+				continue;
+			}
+			if (role !== "assistant") continue;
+			const content = entry.message?.content;
 			if (!Array.isArray(content)) continue;
-			const calls = content.filter(
-				(part): part is { id: string } =>
-					!!part && typeof part === "object" && (part as { type?: string }).type === "toolCall" && typeof (part as { id?: unknown }).id === "string",
-			);
-			if (calls.length === 0) continue;
-			for (const call of calls) ids.add(call.id);
-			batches++;
+			for (const part of content) {
+				if (
+					part &&
+					typeof part === "object" &&
+					(part as { type?: string }).type === "toolCall" &&
+					typeof (part as { id?: unknown }).id === "string"
+				) {
+					ids.add((part as { id: string }).id);
+				}
+			}
 		}
 	} catch {
 		// Session shape changed: treat everything as non-recent.
@@ -689,8 +704,8 @@ function updateStatusBadge(ctx: ExtensionContext): void {
 		toolCycle === 2
 			? " · tools:all"
 			: toolCycle === 1
-				? recentRounds > 1
-					? ` · tools:recent×${recentRounds}`
+				? recentTurns > 1
+					? ` · tools:recent×${recentTurns}`
 					: " · tools:recent"
 				: "";
 	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("dim", `${info.badge}${suffix}`));
@@ -733,7 +748,7 @@ let terminalInputUnsubscribe: (() => void) | undefined;
 export default async function (pi: ExtensionAPI) {
 	const initialState = loadState();
 	setLevel(initialState.level);
-	recentRounds = initialState.recentRounds;
+	recentTurns = initialState.recentTurns;
 	// A reload builds a fresh transcript: history should render clean even when the
 	// persisted hideThinkingBlock setting leaves thinking visible from an earlier peek.
 	(globalThis as Record<PropertyKey, unknown>)[REVEAL_KEY] = false;
@@ -817,7 +832,7 @@ export default async function (pi: ExtensionAPI) {
 			if (parts[0] === "recent") {
 				if (parts[1] === undefined) {
 					ctx.ui.notify(
-						`Recent tool batches: ${recentRounds}. Ctrl+O shows the last ${recentRounds} batch(es). Usage: /quiet recent 1-20`,
+						`Recent user turns: ${recentTurns}. Ctrl+O shows tools from the last ${recentTurns} prompt(s). Usage: /quiet recent 1-20`,
 						"info",
 					);
 					return;
@@ -827,10 +842,10 @@ export default async function (pi: ExtensionAPI) {
 					ctx.ui.notify("Usage: /quiet recent 1-20", "error");
 					return;
 				}
-				recentRounds = parsed;
+				recentTurns = parsed;
 				saveState();
 				updateStatusBadge(ctx);
-				ctx.ui.notify(`Recent tool batches set to ${recentRounds}`, "info");
+				ctx.ui.notify(`Recent user turns set to ${recentTurns}`, "info");
 				return;
 			}
 

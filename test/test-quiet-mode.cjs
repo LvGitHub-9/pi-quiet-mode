@@ -375,24 +375,26 @@ const bashCtx = {
   check("cycle 0: Ctrl+O intercepted a third time", capture.inputHandler("\x0f")?.consume === true);
   check("cycle 0: all tools hidden again", !shownFor("recent-1") && !shownFor("old-1"));
 
-  // ---- /quiet recent：配置“最近”档位展开几批工具调用 ----
-  await sink.commands.get("quiet").handler("recent 3", ctx);
+  // ---- /quiet recent：配置“最近”档位展开最近几个用户轮次 ----
+  await sink.commands.get("quiet").handler("recent 2", ctx);
   check(
-    "recent rounds persisted",
-    JSON.parse(fs.readFileSync(LEVEL_FILE, "utf-8")).recentRounds === 3,
+    "recent turns persisted",
+    JSON.parse(fs.readFileSync(LEVEL_FILE, "utf-8")).recentTurns === 2,
   );
   capture.branch = [
-    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "oldest" }] } },
-    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "r2" }] } },
-    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "r3" }] } },
-    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "r4" }] } },
+    { type: "message", message: { role: "user", content: [{ type: "text", text: "u1" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t1a" }, { type: "toolCall", id: "t1b" }] } },
+    { type: "message", message: { role: "user", content: [{ type: "text", text: "u2" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t2a" }] } },
+    { type: "message", message: { role: "user", content: [{ type: "text", text: "u3" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t3a" }] } },
   ];
-  check("cycle to recent for the multi-batch test", capture.inputHandler("\x0f")?.consume === true);
-  check("recent 3 shows the last three batches", shownFor("r2") && shownFor("r3") && shownFor("r4"));
-  check("recent 3 hides the fourth batch", !shownFor("oldest"));
+  check("cycle to recent for the user-turn test", capture.inputHandler("\x0f")?.consume === true);
+  check("recent 2 shows tools from the last two turns", shownFor("t2a") && shownFor("t3a"));
+  check("recent 2 hides the earlier turn", !shownFor("t1a") && !shownFor("t1b"));
   check(
-    "badge shows recent x3",
-    String(uiState.status["quiet-mode"]).includes("tools:recent×3"),
+    "badge shows recent x2",
+    String(uiState.status["quiet-mode"]).includes("tools:recent×2"),
     String(uiState.status["quiet-mode"]),
   );
   // 回到全隐藏并恢复默认，避免影响后续用例
