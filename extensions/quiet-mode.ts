@@ -634,10 +634,6 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 	ctx.ui.setHiddenThinkingLabel(info.enabled ? "" : undefined);
 	ctx.ui.setStatus(STATUS_KEY, info.enabled ? ctx.ui.theme.fg("dim", info.badge) : undefined);
 	if (info.enabled) {
-		// Force a collapse pass: /reload rebuilds components with the previous
-		// expansion state, and setToolsExpanded() early-returns when the flag already
-		// matches, which left rebuilt tool rows expanded and unable to collapse.
-		ctx.ui.setToolsExpanded(true);
 		ctx.ui.setToolsExpanded(false);
 	}
 }
@@ -645,6 +641,8 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 // ---------------------------------------------------------------------------
 // Extension entry
 // ---------------------------------------------------------------------------
+
+let terminalInputUnsubscribe: (() => void) | undefined;
 
 export default async function (pi: ExtensionAPI) {
 	setLevel(loadLevel());
@@ -675,7 +673,8 @@ export default async function (pi: ExtensionAPI) {
 		// glitches reported by users. Never consumes input.
 		if (ctx.mode === "tui") {
 			try {
-				ctx.ui.onTerminalInput((data) => {
+				terminalInputUnsubscribe?.();
+				terminalInputUnsubscribe = ctx.ui.onTerminalInput((data) => {
 					if (data === "\x0f") debugLog("key ctrl+o");
 					else if (data === "\x14") debugLog("key ctrl+t");
 					return undefined;
