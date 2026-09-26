@@ -110,9 +110,16 @@ function getLevel(): QuietLevel {
 	return value === "full" || value === "partial" ? value : "off";
 }
 
-// 调试日志：设置 PI_QUIET_DEBUG=1 时写入 <agent-dir>/quiet-mode-debug.log
+// 调试日志：PI_QUIET_DEBUG=1 或存在 <agent-dir>/quiet-mode-debug.on 文件时启用。
+// 开关文件让开发者无需重启 Pi 就能开启/关闭日志。
 function debugLog(message: string): void {
-	if (process.env.PI_QUIET_DEBUG !== "1") return;
+	if (process.env.PI_QUIET_DEBUG !== "1") {
+		try {
+			if (!existsSync(join(getAgentDir(), "quiet-mode-debug.on"))) return;
+		} catch {
+			return;
+		}
+	}
 	try {
 		appendFileSync(join(getAgentDir(), "quiet-mode-debug.log"), `${new Date().toISOString()} ${message}\n`);
 	} catch {
