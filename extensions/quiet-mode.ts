@@ -54,12 +54,14 @@ import {
 	createReadToolDefinition,
 	createWriteToolDefinition,
 	getAgentDir,
+	getPackageDir,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { Box, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
 type QuietLevel = "off" | "full" | "partial";
@@ -72,6 +74,10 @@ const STATUS_KEY = "quiet-mode";
 // the current value instead of a stale closure variable.
 const LEVEL_KEY = Symbol.for("pi.quiet-mode.level");
 const PATCH_FLAG_KEY = Symbol.for("pi.quiet-mode.patched");
+// Bump whenever the patch implementation changes. A previous build may have left
+// an older (and possibly inert) wrapper on the prototype; comparing versions
+// instead of a boolean guarantees the current wrapper gets installed on reload.
+const PATCH_VERSION = 2;
 
 const LEVEL_ORDER: QuietLevel[] = ["off", "full", "partial"];
 
@@ -100,6 +106,16 @@ const PARTIAL_GUIDELINE =
 function getLevel(): QuietLevel {
 	const value = (globalThis as Record<PropertyKey, unknown>)[LEVEL_KEY];
 	return value === "full" || value === "partial" ? value : "off";
+}
+
+// 调试日志：设置 PI_QUIET_DEBUG=1 时写入 <agent-dir>/quiet-mode-debug.log
+function debugLog(message: string): void {
+	if (process.env.PI_QUIET_DEBUG !== "1") return;
+	try {
+		appendFileSync(join(getAgentDir(), "quiet-mode-debug.log"), `${new Date().toISOString()} ${message}\n`);
+	} catch {
+		// ignore
+	}
 }
 
 function setLevel(level: QuietLevel): void {
@@ -214,12 +230,40 @@ const SUMMARIES: Record<string, (args: any, theme: Theme) => string> = {
 };
 
 /**
+ * Built-in tool renderers, loaded from the installed package at runtime so that
+ * Ctrl+O shows the exact native look (diffs, truncation hints, background box).
+ * Loaded lazily and optional: if the import fails we fall back to plain text.
+ */
+type BuiltInRenderer = {
+	renderCall?: (args: any, theme: Theme, context: any) => unknown;
+	renderResult?: (result: any, options: any, theme: Theme, context: any) => unknown;
+};
+
+let builtInRenderers: Record<string, BuiltInRenderer> = {};
+
+async function loadBuiltInRenderers(): Promise<void> {
+	try {
+		const entry = join(getPackageDir(), "dist", "core", "tools", "renderers", "index.js");
+		const mod = (await import(pathToFileURL(entry).href)) as {
+			createAllToolRenderers?: () => Record<string, BuiltInRenderer>;
+		};
+		if (typeof mod.createAllToolRenderers === "function") {
+			builtInRenderers = mod.createAllToolRenderers();
+		}
+	} catch {
+		builtInRenderers = {};
+	}
+}
+
+/**
  * Wrap a built-in definition with quiet rendering:
  * - collapsed: call and result render nothing (invisible, no placeholder rows)
- * - expanded (Ctrl+O): one-line call summary plus the full output
+ * - expanded (Ctrl+O): the native built-in renderers, wrapped in the same
+ *   background box the default shell uses
  * - errors: kept as a single red line even while collapsed
  */
 function makeQuietDefinition(
+	name: string,
 	def: AnyToolDefinition,
 	summary: (args: any, theme: Theme) => string,
 ): AnyToolDefinition {
@@ -228,21 +272,48 @@ function makeQuietDefinition(
 		renderShell: "self",
 		renderCall(args, theme, context) {
 			if (!context.expanded) return new Container();
-			return new Text(summary(args, theme), 0, 0);
+			// The edit renderer draws its own box; every other tool composes call and
+			// result inside the result renderer so they share one native-looking box.
+			const builtIn = builtInRenderers[name]?.renderCall;
+			if (name === "edit" && builtIn) return builtIn(args, theme, context) as never;
+			return new Container();
 		},
-		renderResult(result, _options, theme, context) {
+		renderResult(result, options, theme, context) {
 			if (!context.expanded) {
 				if (context.isError) {
 					const first = truncate(textOf(result), 100);
 					return new Text(
-						theme.fg("error", `✗ ${def.name} failed${first ? `: ${first}` : ""} (ctrl+o to view)`),
+						theme.fg("error", `✗ ${name} failed${first ? `: ${first}` : ""} (ctrl+o to view)`),
 						0,
 						0,
 					);
 				}
 				return new Container();
 			}
-			return new Text(renderOutput(result, theme), 0, 0);
+
+			const renderer = builtInRenderers[name];
+			const builtInCall = renderer?.renderCall;
+			const builtInResult = renderer?.renderResult;
+			if (name !== "edit" && builtInResult) {
+				const bg = options.isPartial
+					? "toolPendingBg"
+					: context.isError
+						? "toolErrorBg"
+						: "toolSuccessBg";
+				const box = new Box(1, 1, (text: string) => theme.bg(bg, text));
+				if (builtInCall) box.addChild(builtInCall(context.args, theme, context) as never);
+				box.addChild(builtInResult(result, options, theme, context) as never);
+				return box as never;
+			}
+			if (name === "edit" && builtInResult) {
+				return builtInResult(result, options, theme, context) as never;
+			}
+
+			// Fallback: plain text rendering when the built-in renderers are unavailable.
+			const fallback = new Container();
+			fallback.addChild(new Text(summary(context.args, theme), 0, 0));
+			fallback.addChild(new Text(renderOutput(result, theme), 0, 0));
+			return fallback as never;
 		},
 	};
 }
@@ -296,7 +367,7 @@ function ensureTools(pi: ExtensionAPI, ctx: ExtensionContext, level: QuietLevel)
 		const def = definitions[name];
 		if (!def) continue;
 		if (want === "quiet") {
-			pi.registerTool(makeQuietDefinition(def, SUMMARIES[name]!));
+			pi.registerTool(makeQuietDefinition(name, def, SUMMARIES[name]!));
 		} else {
 			// No renderers => interactive-mode falls back to the built-in renderers.
 			pi.registerTool(def);
@@ -347,11 +418,11 @@ function patchAssistantMessages(): void {
 	try {
 		const proto = (AssistantMessageComponent as unknown as { prototype?: Record<PropertyKey, unknown> })
 			?.prototype;
-		if (!proto || typeof proto.updateContent !== "function" || proto[PATCH_FLAG_KEY]) return;
+		if (!proto || typeof proto.updateContent !== "function" || proto[PATCH_FLAG_KEY] === PATCH_VERSION) return;
 
 		const original = proto.updateContent as (...args: unknown[]) => void;
 		proto.updateContent = function (
-			this: { contentContainer?: { children?: unknown[] }; hasToolCalls?: boolean },
+			this: { contentContainer?: { children?: unknown[] }; hasToolCalls?: boolean; __qmSig?: string },
 			...args: unknown[]
 		) {
 			original.apply(this, args);
@@ -361,6 +432,9 @@ function patchAssistantMessages(): void {
 				const container = this.contentContainer;
 				if (!container || !Array.isArray(container.children)) return;
 				const hideNarration = level === "full" && this.hasToolCalls === true;
+				const before = container.children
+					.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
+					.join(",");
 				const content = container.children.filter((child) => {
 					if (isQuietNoise(child)) return false;
 					if (hideNarration && isMarkdown(child)) return false;
@@ -368,11 +442,22 @@ function patchAssistantMessages(): void {
 				});
 				// Keep one separator row before visible content, nothing for fully hidden messages.
 				container.children = content.length > 0 ? [new Spacer(1), ...content] : [];
+				const after = container.children
+					.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
+					.join(",");
+				const sig = `lvl=${level} hasTools=${String(this.hasToolCalls)} before=[${before}] after=[${after}]`;
+				if (this.__qmSig !== sig) {
+					this.__qmSig = sig;
+					debugLog(sig);
+				}
 			} catch {
 				// Filtering failed: keep the original content.
 			}
 		};
-		proto[PATCH_FLAG_KEY] = true;
+		proto[PATCH_FLAG_KEY] = PATCH_VERSION;
+		debugLog(
+			`patch installed: class=${AssistantMessageComponent?.name} version=${PATCH_VERSION}`,
+		);
 	} catch {
 		// Component internals changed: skip the patch, rendering stays native.
 	}
@@ -384,6 +469,7 @@ function patchAssistantMessages(): void {
 
 function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 	if (ctx.mode !== "tui") return;
+	debugLog(`applyUi: level=${level} mode=${ctx.mode}`);
 	const info = LEVEL_INFO[level];
 	ctx.ui.setWorkingMessage(info.enabled ? "Thinking..." : undefined);
 	// Hiding the label also triggers updateContent() on existing messages, so the
@@ -399,9 +485,11 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 // Extension entry
 // ---------------------------------------------------------------------------
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
 	setLevel(loadLevel());
+	debugLog(`factory: level=${getLevel()}`);
 	patchAssistantMessages();
+	await loadBuiltInRenderers();
 
 	pi.on("session_start", async (_event, ctx) => {
 		getOverridableNames(pi);

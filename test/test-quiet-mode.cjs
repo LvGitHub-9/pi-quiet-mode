@@ -62,7 +62,7 @@ const jiti = createJiti(__filename, {
   },
 });
 
-const theme = { fg: (_c, t) => t, bold: (t) => t };
+const theme = { fg: (_c, t) => t, bold: (t) => t, bg: (_c, t) => t };
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -188,6 +188,10 @@ const bashCtx = {
     if (!cond) failed = true;
   };
 
+  // 回归测试：模拟旧版扩展留在原型上的布尔补丁标记（true）。
+  // 新版本必须无视它并重新安装补丁，否则会永远失效。
+  AssistantMessageComponent.prototype[Symbol.for("pi.quiet-mode.patched")] = true;
+
   // Fresh extension runtime (level off)
   let sink = makeSink();
   let pi = makePi(sink);
@@ -201,7 +205,7 @@ const bashCtx = {
 
   let factory = await loadFactory();
   check("module exports a factory", typeof factory === "function");
-  factory(pi);
+  await factory(pi);
   await emitSessionStart(sink, ctx);
   check("registers /quiet command", sink.commands.has("quiet"));
   check("level off leaves built-ins untouched", sink.tools.size === 0, `tools=${sink.tools.size}`);
@@ -233,11 +237,35 @@ const bashCtx = {
       )
       .render(100).length === 0,
   );
+  const makeRenderCtx = (expanded, args = {}, extra = {}) => ({
+    args,
+    expanded,
+    isError: false,
+    isPartial: false,
+    state: {},
+    showImages: false,
+    cwd: "/tmp/",
+    argsComplete: true,
+    executionStarted: true,
+    invalidate: () => {},
+    toolCallId: "t",
+    lastComponent: undefined,
+    ...extra,
+  });
+  const expandedCtx = makeRenderCtx(true, { path: "/tmp/a.txt", limit: 5 });
   check(
-    "expanded tool call renders 1 row",
-    readDef.renderCall({ path: "/tmp/a.txt", limit: 5 }, theme, { expanded: true, isError: false }).render(100)
-      .length === 1,
+    "expanded tool call renders 0 rows (box composed by result)",
+    readDef.renderCall({ path: "/tmp/a.txt", limit: 5 }, theme, expandedCtx).render(100).length === 0,
   );
+  const expandedRows = readDef
+    .renderResult(
+      { content: [{ type: "text", text: "line1\nline2" }], details: undefined },
+      { expanded: true, isPartial: false },
+      theme,
+      expandedCtx,
+    )
+    .render(100);
+  check("expanded result uses built-in rendering", expandedRows.length > 0, `rows=${expandedRows.length}`);
   const errorRows = readDef
     .renderResult(
       { content: [{ type: "text", text: "ENOENT" }], details: undefined },
@@ -306,7 +334,7 @@ const bashCtx = {
   const uiState2 = makeUiState();
   const ctx2 = makeCtx(uiState2);
   factory = await loadFactory();
-  factory(pi2);
+  await factory(pi2);
   await emitSessionStart(sink2, ctx2);
   check("reload restores level 2 tool overrides", sink2.tools.size === 7, `tools=${sink2.tools.size}`);
   check("reload restores level 2 badge", uiState2.status["quiet-mode"] === "quiet:2");
@@ -319,7 +347,7 @@ const bashCtx = {
   const uiState3 = makeUiState();
   const ctx3 = makeCtx(uiState3);
   factory = await loadFactory();
-  factory(pi3);
+  await factory(pi3);
   await emitSessionStart(sink3, ctx3);
   check("v1 state migrates to level 1", sink3.tools.size === 7 && uiState3.status["quiet-mode"] === "quiet:1");
 
