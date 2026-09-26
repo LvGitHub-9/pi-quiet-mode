@@ -333,6 +333,23 @@ const bashCtx = {
     streamingComponent.render(100).some((line) => line.includes("This is the answer")),
   );
 
+  // Ctrl+T（app.thinking.toggle）：展开/收起思考块
+  const thinkingComponent = new AssistantMessageComponent(intermediateMessage, true, undefined, "", 1, []);
+  check(
+    "level 1: thinking hidden by default",
+    !thinkingComponent.render(100).some((line) => line.includes("internal reasoning")),
+  );
+  thinkingComponent.setHideThinkingBlock(false);
+  check(
+    "level 1: Ctrl+T reveals thinking",
+    thinkingComponent.render(100).some((line) => line.includes("internal reasoning")),
+  );
+  thinkingComponent.setHideThinkingBlock(true);
+  check(
+    "level 1: Ctrl+T again hides thinking",
+    !thinkingComponent.render(100).some((line) => line.includes("internal reasoning")),
+  );
+
   const registeredAfterFull = sink.registerCount;
 
   // ---- level 2: partial ----
@@ -345,6 +362,18 @@ const bashCtx = {
   const partialStreaming = new AssistantMessageComponent(undefined, true, undefined, "", 1, []);
   partialStreaming.updateContent(textMessage, true);
   check("level 2 streams narration live", partialStreaming.render(100).length > 0);
+
+  // Ctrl+T 在部分安静下同样可用
+  const partialThinking = new AssistantMessageComponent(intermediateMessage, true, undefined, "", 1, []);
+  check(
+    "level 2: thinking hidden by default",
+    !partialThinking.render(100).some((line) => line.includes("internal reasoning")),
+  );
+  partialThinking.setHideThinkingBlock(false);
+  check(
+    "level 2: Ctrl+T reveals thinking",
+    partialThinking.render(100).some((line) => line.includes("internal reasoning")),
+  );
   lines = renderMessage(textMessage, "");
   check("level 2 keeps the final answer", lines.some((line) => line.includes("This is the answer")));
   const guidelines = await emitBeforeAgentStart(sink, ctx);
