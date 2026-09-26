@@ -344,6 +344,17 @@ const bashCtx = {
     "level 1: Ctrl+T reveals thinking",
     thinkingComponent.render(100).some((line) => line.includes("internal reasoning")),
   );
+  // 展开思考后，思考与正文之间要保留空行
+  const revealedFinal = new AssistantMessageComponent(textMessage, true, undefined, "", 1, []);
+  revealedFinal.setHideThinkingBlock(false);
+  const revealedLines = revealedFinal.render(100);
+  const thinkIdx = revealedLines.findIndex((line) => line.includes("internal reasoning"));
+  const answerIdx = revealedLines.findIndex((line) => line.includes("This is the answer"));
+  check(
+    "level 1: revealed thinking keeps a blank line before the answer",
+    thinkIdx >= 0 && answerIdx > thinkIdx && isBlank(revealedLines[answerIdx - 1]),
+    `think=${thinkIdx} answer=${answerIdx}`,
+  );
   thinkingComponent.setHideThinkingBlock(true);
   check(
     "level 1: Ctrl+T again hides thinking",

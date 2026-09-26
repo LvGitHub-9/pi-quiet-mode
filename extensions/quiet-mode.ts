@@ -249,6 +249,7 @@ type BuiltInRenderer = {
 };
 
 let builtInRenderers: Record<string, BuiltInRenderer> = {};
+const loggedRenderPaths = new Set<string>();
 
 async function loadBuiltInRenderers(): Promise<void> {
 	try {
@@ -258,9 +259,13 @@ async function loadBuiltInRenderers(): Promise<void> {
 		};
 		if (typeof mod.createAllToolRenderers === "function") {
 			builtInRenderers = mod.createAllToolRenderers();
+			debugLog(`builtin renderers loaded: ${Object.keys(builtInRenderers).join(",")}`);
+		} else {
+			debugLog("builtin renderers: factory not found");
 		}
-	} catch {
+	} catch (error) {
 		builtInRenderers = {};
+		debugLog(`builtin renderers failed: ${String(error)}`);
 	}
 }
 
@@ -303,6 +308,11 @@ function makeQuietDefinition(
 			const renderer = builtInRenderers[name];
 			const builtInCall = renderer?.renderCall;
 			const builtInResult = renderer?.renderResult;
+			const pathKey = `${name}:${builtInResult ? "builtin" : "fallback"}`;
+			if (!loggedRenderPaths.has(pathKey)) {
+				loggedRenderPaths.add(pathKey);
+				debugLog(`expanded render path: ${pathKey}`);
+			}
 			if (name !== "edit" && builtInResult) {
 				const bg = options.isPartial
 					? "toolPendingBg"
@@ -402,17 +412,22 @@ function ensureTools(pi: ExtensionAPI, ctx: ExtensionContext, level: QuietLevel)
  * fails soft: on any structural change it simply does nothing.
  */
 
-function isQuietNoise(child: unknown): boolean {
+function isSpacer(child: unknown): boolean {
 	try {
-		const node = child as { constructor?: { name?: string }; child?: { text?: unknown } };
-		if (node?.constructor?.name === "Spacer") return true;
-		// MouseRegion-wrapped hidden thinking label: a Text with ANSI-only content.
-		const inner = node?.child;
-		if (inner && typeof inner.text === "string" && visibleWidth(inner.text) === 0) return true;
+		return (child as { constructor?: { name?: string } })?.constructor?.name === "Spacer";
 	} catch {
-		// ignore
+		return false;
 	}
-	return false;
+}
+
+function isInvisibleLabel(child: unknown): boolean {
+	try {
+		// MouseRegion-wrapped hidden thinking label: a Text with ANSI-only content.
+		const inner = (child as { child?: { text?: unknown } })?.child;
+		return !!inner && typeof inner.text === "string" && visibleWidth(inner.text) === 0;
+	} catch {
+		return false;
+	}
 }
 
 function isMarkdown(child: unknown): boolean {
@@ -446,13 +461,25 @@ function applyQuietFilter(component: {
 		const before = container.children
 			.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
 			.join(",");
-		const content = container.children.filter((child) => {
-			if (isQuietNoise(child)) return false;
+		// Drop invisible labels and (in full mode) narration, then normalize blank
+		// lines: collapse runs, trim the edges, keep one separator before the first
+		// visible block. This keeps a blank line between revealed thinking and the
+		// answer instead of gluing them together.
+		const kept = container.children.filter((child) => {
+			if (isInvisibleLabel(child)) return false;
 			if (hideNarration && isMarkdown(child)) return false;
 			return true;
 		});
-		// Keep one separator row before visible content, nothing for fully hidden messages.
-		container.children = content.length > 0 ? [new Spacer(1), ...content] : [];
+		const compact: unknown[] = [];
+		for (const child of kept) {
+			if (isSpacer(child)) {
+				if (compact.length === 0 || isSpacer(compact[compact.length - 1])) continue;
+			}
+			compact.push(child);
+		}
+		while (compact.length > 0 && isSpacer(compact[0])) compact.shift();
+		while (compact.length > 0 && isSpacer(compact[compact.length - 1])) compact.pop();
+		container.children = compact.length > 0 ? [new Spacer(1), ...compact] : [];
 		const after = container.children
 			.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
 			.join(",");
