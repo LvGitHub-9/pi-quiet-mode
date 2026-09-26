@@ -887,6 +887,18 @@ export default async function (pi: ExtensionAPI) {
 			saveState();
 			applyUi(ctx, next);
 			ctx.ui.notify(LEVEL_INFO[next].notify, "info");
+
+			// Historical tool rows stay bound to the renderer they were created with.
+			// Crossing the on/off boundary leaves them inconsistent (native rows cannot
+			// be hidden by the quiet cycle; quiet rows lose the native preview), so
+			// rebuild the transcript with the new level's definitions.
+			if ((current === "off") !== (next === "off")) {
+				try {
+					await ctx.reload();
+				} catch (error) {
+					debugLog(`level-switch reload failed: ${String(error)}`);
+				}
+			}
 		},
 	});
 }

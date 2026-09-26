@@ -109,6 +109,9 @@ function makeCtx(uiState, capture) {
     hasUI: true,
     cwd: "/tmp/",
     isProjectTrusted: () => false,
+    reload: async () => {
+      if (capture) capture.reloadCount = (capture.reloadCount ?? 0) + 1;
+    },
     sessionManager: {
       getBranch: () => capture?.branch ?? [],
     },
@@ -261,6 +264,7 @@ const bashCtx = {
 
   // ---- level 1: full ----
   await sink.commands.get("quiet").handler("1", ctx);
+  check("off -> quiet rebuilds the transcript", (capture.reloadCount ?? 0) === 1, `reloads=${capture.reloadCount ?? 0}`);
   check("level 1 overrides 7 built-ins", sink.tools.size === 7, `tools=${[...sink.tools.keys()].join(",")}`);
   check("level 1 persists to disk", fs.readFileSync(LEVEL_FILE, "utf-8").includes('"full"'));
   check("working message is Thinking...", uiState.workingMessage === "Thinking...", String(uiState.workingMessage));
@@ -474,6 +478,7 @@ const bashCtx = {
 
   // ---- level 2: partial ----
   await sink.commands.get("quiet").handler("2", ctx);
+  check("quiet -> quiet does not rebuild", (capture.reloadCount ?? 0) === 1, `reloads=${capture.reloadCount ?? 0}`);
   check("level 2 reuses quiet tool definitions", sink.registerCount === registeredAfterFull);
   check("status badge shows quiet:2", uiState.status["quiet-mode"] === "quiet:2", String(uiState.status["quiet-mode"]));
   lines = renderMessage(intermediateMessage, "");
@@ -501,6 +506,7 @@ const bashCtx = {
 
   // ---- level 3: off ----
   await sink.commands.get("quiet").handler("3", ctx);
+  check("quiet -> off rebuilds the transcript", (capture.reloadCount ?? 0) === 2, `reloads=${capture.reloadCount ?? 0}`);
   check("level 3 restores plain definitions", sink.tools.get("read").renderShell !== "self");
   // 回归：安静模式期间创建的旧组件切到关闭档后，Ctrl+O 仍能展开/收起
   const staleExpanded = readDef
