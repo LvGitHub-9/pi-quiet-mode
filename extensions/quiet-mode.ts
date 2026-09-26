@@ -152,24 +152,37 @@ function stateFile(): string {
 	return join(getAgentDir(), "quiet-mode.json");
 }
 
-function loadLevel(): QuietLevel {
+function loadState(): { level: QuietLevel; recentRounds: number } {
+	let level: QuietLevel = "off";
+	let recentRounds = 1;
 	try {
-		const data = JSON.parse(readFileSync(stateFile(), "utf-8")) as { level?: unknown; quiet?: unknown };
-		if (data.level === "off" || data.level === "full" || data.level === "partial") return data.level;
-		// Migrate the original boolean format.
-		if (data.quiet === true) return "full";
-		if (data.quiet === false) return "off";
+		const data = JSON.parse(readFileSync(stateFile(), "utf-8")) as {
+			level?: unknown;
+			quiet?: unknown;
+			recentRounds?: unknown;
+		};
+		if (data.level === "off" || data.level === "full" || data.level === "partial") {
+			level = data.level;
+		} else if (data.quiet === true) {
+			// Migrate the original boolean format.
+			level = "full";
+		} else if (data.quiet === false) {
+			level = "off";
+		}
+		if (typeof data.recentRounds === "number" && Number.isFinite(data.recentRounds)) {
+			recentRounds = Math.min(20, Math.max(1, Math.round(data.recentRounds)));
+		}
 	} catch {
-		// Missing or invalid file: stay off.
+		// Missing or invalid file: defaults.
 	}
-	return "off";
+	return { level, recentRounds };
 }
 
-function saveLevel(level: QuietLevel): void {
+function saveState(): void {
 	try {
 		const dir = getAgentDir();
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-		writeFileSync(stateFile(), JSON.stringify({ level }, null, 2), "utf-8");
+		writeFileSync(stateFile(), JSON.stringify({ level: getLevel(), recentRounds }, null, 2), "utf-8");
 	} catch {
 		// Persistence failure must not break the session.
 	}
@@ -265,6 +278,8 @@ const tracedExpansions = new Set<string>();
 type ToolCycle = 0 | 1 | 2;
 let toolCycle: ToolCycle = 0;
 let partialToolIds = new Set<string>();
+/** How many recent tool-call batches the "recent" cycle step expands. */
+let recentRounds = 1;
 
 function isToolShown(toolCallId: string): boolean {
 	if (toolCycle === 2) return true;
@@ -272,7 +287,7 @@ function isToolShown(toolCallId: string): boolean {
 	return false;
 }
 
-/** Tool call ids of the most recent assistant message that contains tool calls. */
+/** Tool call ids of the most recent `recentRounds` assistant tool-call batches. */
 function computePartialToolIds(ctx: ExtensionContext): Set<string> {
 	const ids = new Set<string>();
 	try {
@@ -280,7 +295,8 @@ function computePartialToolIds(ctx: ExtensionContext): Set<string> {
 			type?: string;
 			message?: { role?: string; content?: unknown };
 		}>;
-		for (let i = branch.length - 1; i >= 0; i--) {
+		let batches = 0;
+		for (let i = branch.length - 1; i >= 0 && batches < recentRounds; i--) {
 			const entry = branch[i];
 			if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
 			const content = entry.message.content;
@@ -291,7 +307,7 @@ function computePartialToolIds(ctx: ExtensionContext): Set<string> {
 			);
 			if (calls.length === 0) continue;
 			for (const call of calls) ids.add(call.id);
-			break;
+			batches++;
 		}
 	} catch {
 		// Session shape changed: treat everything as non-recent.
@@ -669,7 +685,14 @@ function updateStatusBadge(ctx: ExtensionContext): void {
 		ctx.ui.setStatus(STATUS_KEY, undefined);
 		return;
 	}
-	const suffix = toolCycle === 2 ? " · tools:all" : toolCycle === 1 ? " · tools:recent" : "";
+	const suffix =
+		toolCycle === 2
+			? " · tools:all"
+			: toolCycle === 1
+				? recentRounds > 1
+					? ` · tools:recent×${recentRounds}`
+					: " · tools:recent"
+				: "";
 	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("dim", `${info.badge}${suffix}`));
 }
 
@@ -708,7 +731,9 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 let terminalInputUnsubscribe: (() => void) | undefined;
 
 export default async function (pi: ExtensionAPI) {
-	setLevel(loadLevel());
+	const initialState = loadState();
+	setLevel(initialState.level);
+	recentRounds = initialState.recentRounds;
 	// A reload builds a fresh transcript: history should render clean even when the
 	// persisted hideThinkingBlock setting leaves thinking visible from an earlier peek.
 	(globalThis as Record<PropertyKey, unknown>)[REVEAL_KEY] = false;
@@ -781,11 +806,33 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("quiet", {
-		description: "Set quiet level: 1 full, 2 partial, 3 off (no argument cycles)",
+		description: "Set quiet level: 1 full, 2 partial, 3 off (no argument cycles); /quiet recent [n]",
 		handler: async (args, ctx) => {
 			const raw = args.trim().toLowerCase();
 			const current = getLevel();
 			let next: QuietLevel;
+
+			// /quiet recent [1-20]: how many recent tool batches the "recent" step expands.
+			const parts = raw.split(/\s+/).filter(Boolean);
+			if (parts[0] === "recent") {
+				if (parts[1] === undefined) {
+					ctx.ui.notify(
+						`Recent tool batches: ${recentRounds}. Ctrl+O shows the last ${recentRounds} batch(es). Usage: /quiet recent 1-20`,
+						"info",
+					);
+					return;
+				}
+				const parsed = Number.parseInt(parts[1], 10);
+				if (!Number.isFinite(parsed) || parsed < 1 || parsed > 20) {
+					ctx.ui.notify("Usage: /quiet recent 1-20", "error");
+					return;
+				}
+				recentRounds = parsed;
+				saveState();
+				updateStatusBadge(ctx);
+				ctx.ui.notify(`Recent tool batches set to ${recentRounds}`, "info");
+				return;
+			}
 
 			if (!raw) {
 				next = LEVEL_ORDER[(LEVEL_ORDER.indexOf(current) + 1) % LEVEL_ORDER.length]!;
@@ -814,7 +861,7 @@ export default async function (pi: ExtensionAPI) {
 				return;
 			}
 
-			saveLevel(next);
+			saveState();
 			applyUi(ctx, next);
 			ctx.ui.notify(LEVEL_INFO[next].notify, "info");
 		},

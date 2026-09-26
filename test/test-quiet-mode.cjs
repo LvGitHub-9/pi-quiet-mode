@@ -374,6 +374,31 @@ const bashCtx = {
   // 第三次 Ctrl+O 回到完全隐藏
   check("cycle 0: Ctrl+O intercepted a third time", capture.inputHandler("\x0f")?.consume === true);
   check("cycle 0: all tools hidden again", !shownFor("recent-1") && !shownFor("old-1"));
+
+  // ---- /quiet recent：配置“最近”档位展开几批工具调用 ----
+  await sink.commands.get("quiet").handler("recent 3", ctx);
+  check(
+    "recent rounds persisted",
+    JSON.parse(fs.readFileSync(LEVEL_FILE, "utf-8")).recentRounds === 3,
+  );
+  capture.branch = [
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "oldest" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "r2" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "r3" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "r4" }] } },
+  ];
+  check("cycle to recent for the multi-batch test", capture.inputHandler("\x0f")?.consume === true);
+  check("recent 3 shows the last three batches", shownFor("r2") && shownFor("r3") && shownFor("r4"));
+  check("recent 3 hides the fourth batch", !shownFor("oldest"));
+  check(
+    "badge shows recent x3",
+    String(uiState.status["quiet-mode"]).includes("tools:recent×3"),
+    String(uiState.status["quiet-mode"]),
+  );
+  // 回到全隐藏并恢复默认，避免影响后续用例
+  capture.inputHandler("\x0f");
+  capture.inputHandler("\x0f");
+  await sink.commands.get("quiet").handler("recent 1", ctx);
   const errorRows = readDef
     .renderResult(
       { content: [{ type: "text", text: "ENOENT" }], details: undefined },
