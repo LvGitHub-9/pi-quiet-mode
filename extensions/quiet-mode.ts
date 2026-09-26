@@ -386,6 +386,12 @@ function makeQuietDefinition(
 			return new Container();
 		},
 		renderResult(result, options, theme, context) {
+			const traceKey = `${name}#${context.toolCallId}`;
+			const traceState = `level=${getLevel()} expanded=${String(context.expanded)} shown=${String(isToolShown(context.toolCallId, context.expanded))}`;
+			if (tracedExpansions.get(traceKey) !== traceState) {
+				tracedExpansions.set(traceKey, traceState);
+				debugLog(`tool ${traceKey} ${traceState}`);
+			}
 			if (!isToolShown(context.toolCallId, context.expanded)) {
 				if (context.isError) {
 					const first = truncate(textOf(result), 100);
@@ -398,15 +404,9 @@ function makeQuietDefinition(
 				return new Container();
 			}
 
-		const renderer = builtInRenderers[name];
+			const renderer = builtInRenderers[name];
 			const builtInCall = renderer?.renderCall;
 			const builtInResult = renderer?.renderResult;
-			const traceKey = `${name}#${context.toolCallId}`;
-			const traceState = `level=${getLevel()} expanded=${String(context.expanded)} shown=${String(isToolShown(context.toolCallId, context.expanded))}`;
-			if (tracedExpansions.get(traceKey) !== traceState) {
-				tracedExpansions.set(traceKey, traceState);
-				debugLog(`tool ${traceKey} ${traceState}`);
-			}
 			const bg = options.isPartial
 				? "toolPendingBg"
 				: context.isError
