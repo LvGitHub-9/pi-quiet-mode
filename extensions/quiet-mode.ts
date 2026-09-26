@@ -715,10 +715,11 @@ function updateStatusBadge(ctx: ExtensionContext): void {
 function applyToolCycle(ctx: ExtensionContext): void {
 	if (ctx.mode !== "tui") return;
 	partialToolIds = toolCycle === 1 ? computePartialToolIds(ctx) : new Set();
-	// Force every ToolExecutionComponent to re-render; our renderers decide
-	// visibility from the cycle state, not from the component's expanded flag.
-	ctx.ui.setToolsExpanded(true);
-	ctx.ui.setToolsExpanded(false);
+	// A single render pass: flipping the flag triggers setExpanded() on every tool
+	// component and our renderers decide visibility from the cycle state, so there
+	// is no need for the previous double toggle (which doubled the redraw work and
+	// made Pi's full-redraw-on-history-change more likely).
+	ctx.ui.setToolsExpanded(!ctx.ui.getToolsExpanded());
 	updateStatusBadge(ctx);
 }
 
@@ -733,9 +734,9 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 	// Hiding the label also triggers updateContent() on existing messages, so the
 	// compaction patch is applied or removed immediately.
 	ctx.ui.setHiddenThinkingLabel(info.enabled ? "" : undefined);
-	if (info.enabled) {
-		ctx.ui.setToolsExpanded(false);
-	}
+	// Level switches and reloads always start collapsed; our renderers decide what
+	// is visible from the cycle state.
+	ctx.ui.setToolsExpanded(false);
 	updateStatusBadge(ctx);
 }
 
