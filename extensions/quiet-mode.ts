@@ -56,7 +56,7 @@ import {
 	getAgentDir,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -314,7 +314,9 @@ function ensureTools(pi: ExtensionAPI, ctx: ExtensionContext, level: QuietLevel)
  * for a hidden thinking label. The public API cannot remove them, so while a
  * quiet level is active we filter these invisible rows out of the component's
  * content container. Full mode additionally removes the intermediate narration
- * Markdown of messages that contain tool calls.
+ * Markdown of messages that contain tool calls. Messages that keep visible
+ * content get exactly one leading separator row, so the transcript breathes
+ * without accumulating filler; fully hidden messages render zero rows.
  *
  * The patch is guarded with Symbol.for (safe across /reload) and every step
  * fails soft: on any structural change it simply does nothing.
@@ -359,11 +361,13 @@ function patchAssistantMessages(): void {
 				const container = this.contentContainer;
 				if (!container || !Array.isArray(container.children)) return;
 				const hideNarration = level === "full" && this.hasToolCalls === true;
-				container.children = container.children.filter((child) => {
+				const content = container.children.filter((child) => {
 					if (isQuietNoise(child)) return false;
 					if (hideNarration && isMarkdown(child)) return false;
 					return true;
 				});
+				// Keep one separator row before visible content, nothing for fully hidden messages.
+				container.children = content.length > 0 ? [new Spacer(1), ...content] : [];
 			} catch {
 				// Filtering failed: keep the original content.
 			}

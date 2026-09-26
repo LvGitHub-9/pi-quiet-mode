@@ -252,7 +252,7 @@ const bashCtx = {
   check("level 1 hides intermediate narration", lines.length === 0, `rows=${lines.length}`);
   lines = renderMessage(textMessage, "");
   check("level 1 keeps the final answer", lines.some((line) => line.includes("This is the answer")));
-  check("level 1 has no blank rows", lines.filter(isBlank).length === 0, `blank=${lines.filter(isBlank).length}`);
+  check("level 1 keeps exactly one separator row", lines.filter(isBlank).length === 1, `blank=${lines.filter(isBlank).length}`);
   check("level 1 does not add narration guideline", (await emitBeforeAgentStart(sink, ctx)).length === 0);
 
   const registeredAfterFull = sink.registerCount;
@@ -263,7 +263,7 @@ const bashCtx = {
   check("status badge shows quiet:2", uiState.status["quiet-mode"] === "quiet:2", String(uiState.status["quiet-mode"]));
   lines = renderMessage(intermediateMessage, "");
   check("level 2 keeps intermediate narration", lines.some((line) => line.includes("inspect the config")));
-  check("level 2 has no blank rows", lines.filter(isBlank).length === 0, `blank=${lines.filter(isBlank).length}`);
+  check("level 2 keeps exactly one separator row", lines.filter(isBlank).length === 1, `blank=${lines.filter(isBlank).length}`);
   lines = renderMessage(textMessage, "");
   check("level 2 keeps the final answer", lines.some((line) => line.includes("This is the answer")));
   const guidelines = await emitBeforeAgentStart(sink, ctx);
