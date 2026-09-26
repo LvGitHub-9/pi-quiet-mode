@@ -283,6 +283,16 @@ const bashCtx = {
   check("level 1 keeps exactly one separator row", lines.filter(isBlank).length === 1, `blank=${lines.filter(isBlank).length}`);
   check("level 1 does not add narration guideline", (await emitBeforeAgentStart(sink, ctx)).length === 0);
 
+  // 流式阶段不能闪现文字，否则会出现“刚输出完就消失”
+  const streamingComponent = new AssistantMessageComponent(undefined, true, undefined, "", 1, []);
+  streamingComponent.updateContent(textMessage, true);
+  check("level 1 hides streaming text (no flash)", streamingComponent.render(100).length === 0);
+  streamingComponent.updateContent(textMessage, false);
+  check(
+    "level 1 shows text once the message completes",
+    streamingComponent.render(100).some((line) => line.includes("This is the answer")),
+  );
+
   const registeredAfterFull = sink.registerCount;
 
   // ---- level 2: partial ----
@@ -292,6 +302,9 @@ const bashCtx = {
   lines = renderMessage(intermediateMessage, "");
   check("level 2 keeps intermediate narration", lines.some((line) => line.includes("inspect the config")));
   check("level 2 keeps exactly one separator row", lines.filter(isBlank).length === 1, `blank=${lines.filter(isBlank).length}`);
+  const partialStreaming = new AssistantMessageComponent(undefined, true, undefined, "", 1, []);
+  partialStreaming.updateContent(textMessage, true);
+  check("level 2 streams narration live", partialStreaming.render(100).length > 0);
   lines = renderMessage(textMessage, "");
   check("level 2 keeps the final answer", lines.some((line) => line.includes("This is the answer")));
   const guidelines = await emitBeforeAgentStart(sink, ctx);

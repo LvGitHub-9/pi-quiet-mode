@@ -431,7 +431,11 @@ function patchAssistantMessages(): void {
 			try {
 				const container = this.contentContainer;
 				if (!container || !Array.isArray(container.children)) return;
-				const hideNarration = level === "full" && this.hasToolCalls === true;
+				// updateContent(message, isStreaming): in full mode hide narration while
+				// streaming too, otherwise text appears and then vanishes when the tool
+				// call arrives. The final answer is shown once the message is complete.
+				const isStreaming = args[1] === true;
+				const hideNarration = level === "full" && (this.hasToolCalls === true || isStreaming);
 				const before = container.children
 					.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
 					.join(",");
@@ -445,7 +449,7 @@ function patchAssistantMessages(): void {
 				const after = container.children
 					.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
 					.join(",");
-				const sig = `lvl=${level} hasTools=${String(this.hasToolCalls)} before=[${before}] after=[${after}]`;
+				const sig = `lvl=${level} streaming=${String(isStreaming)} hasTools=${String(this.hasToolCalls)} before=[${before}] after=[${after}]`;
 				if (this.__qmSig !== sig) {
 					this.__qmSig = sig;
 					debugLog(sig);
