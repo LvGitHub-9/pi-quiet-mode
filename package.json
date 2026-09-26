@@ -1,0 +1,30 @@
+{
+  "name": "pi-quiet-mode",
+  "version": "0.1.0",
+  "description": "Three-level quiet mode for Pi: hide tool noise without losing sight of the work.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "quiet",
+    "tui"
+  ],
+  "license": "MIT",
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/quiet-mode.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "scripts": {
+    "test": "node test/test-quiet-mode.cjs"
+  }
+}
