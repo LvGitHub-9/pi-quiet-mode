@@ -504,7 +504,17 @@ function patchAssistantMessages(): void {
 
 		const original = proto.updateContent as (...args: unknown[]) => void;
 		proto.updateContent = function (this: unknown, ...args: unknown[]) {
-			original.apply(this, args);
+			// Stale wrappers from older builds are still in the chain and destroy data
+			// (they strip spacer rows before the current filter runs). Mask the level as
+			// "off" while the inner chain executes so every old level-aware wrapper
+			// no-ops, then restore the real level for the current filter.
+			const realLevel = getLevel();
+			if (realLevel !== "off") setLevel("off");
+			try {
+				original.apply(this, args);
+			} finally {
+				setLevel(realLevel);
+			}
 			const filter = (globalThis as Record<PropertyKey, unknown>)[FILTER_KEY];
 			if (typeof filter === "function") (filter as (component: unknown) => void)(this);
 		};
