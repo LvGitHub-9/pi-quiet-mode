@@ -74,10 +74,12 @@ const STATUS_KEY = "quiet-mode";
 // the current value instead of a stale closure variable.
 const LEVEL_KEY = Symbol.for("pi.quiet-mode.level");
 const PATCH_FLAG_KEY = Symbol.for("pi.quiet-mode.patched");
-// Bump whenever the patch implementation changes. A previous build may have left
-// an older (and possibly inert) wrapper on the prototype; comparing versions
-// instead of a boolean guarantees the current wrapper gets installed on reload.
-const PATCH_VERSION = 2;
+// The installed wrapper is a stable shell that delegates to whatever filter this
+// global symbol points at. Every /reload republishes the filter, so the newest
+// implementation always runs even though the wrapper itself is installed once.
+const FILTER_KEY = Symbol.for("pi.quiet-mode.filter");
+// Only used to upgrade shells from older builds that hard-coded their logic.
+const PATCH_VERSION = 3;
 
 const LEVEL_ORDER: QuietLevel[] = ["off", "full", "partial"];
 
@@ -414,59 +416,66 @@ function isMarkdown(child: unknown): boolean {
 	}
 }
 
+/**
+ * Current transcript filter. Republished on every load through FILTER_KEY so the
+ * installed wrapper always delegates to the latest implementation.
+ */
+function applyQuietFilter(component: {
+	contentContainer?: { children?: unknown[] };
+	hasToolCalls?: boolean;
+	isStreaming?: boolean;
+	__qmSig?: string;
+}): void {
+	const level = getLevel();
+	if (level === "off") return;
+	try {
+		const container = component.contentContainer;
+		if (!container || !Array.isArray(container.children)) return;
+		// Hide narration while streaming too. Read the component's own flag instead
+		// of the call argument: invalidate() re-runs updateContent(message) without
+		// it, which otherwise made streaming text pop in and disappear again.
+		const isStreaming = component.isStreaming === true;
+		const hideNarration = level === "full" && (component.hasToolCalls === true || isStreaming);
+		const before = container.children
+			.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
+			.join(",");
+		const content = container.children.filter((child) => {
+			if (isQuietNoise(child)) return false;
+			if (hideNarration && isMarkdown(child)) return false;
+			return true;
+		});
+		// Keep one separator row before visible content, nothing for fully hidden messages.
+		container.children = content.length > 0 ? [new Spacer(1), ...content] : [];
+		const after = container.children
+			.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
+			.join(",");
+		const sig = `lvl=${level} streaming=${String(isStreaming)} hasTools=${String(component.hasToolCalls)} before=[${before}] after=[${after}]`;
+		if (component.__qmSig !== sig) {
+			component.__qmSig = sig;
+			debugLog(sig);
+		}
+	} catch {
+		// Filtering failed: keep the original content.
+	}
+}
+
 function patchAssistantMessages(): void {
+	// Publish the latest filter first: older shells left on the prototype will run
+	// it too, so even a stale wrapper cannot re-introduce old behavior.
+	(globalThis as Record<PropertyKey, unknown>)[FILTER_KEY] = applyQuietFilter;
 	try {
 		const proto = (AssistantMessageComponent as unknown as { prototype?: Record<PropertyKey, unknown> })
 			?.prototype;
 		if (!proto || typeof proto.updateContent !== "function" || proto[PATCH_FLAG_KEY] === PATCH_VERSION) return;
 
 		const original = proto.updateContent as (...args: unknown[]) => void;
-		proto.updateContent = function (
-			this: {
-				contentContainer?: { children?: unknown[] };
-				hasToolCalls?: boolean;
-				isStreaming?: boolean;
-				__qmSig?: string;
-			},
-			...args: unknown[]
-		) {
+		proto.updateContent = function (this: unknown, ...args: unknown[]) {
 			original.apply(this, args);
-			const level = getLevel();
-			if (level === "off") return;
-			try {
-				const container = this.contentContainer;
-				if (!container || !Array.isArray(container.children)) return;
-				// Hide narration while streaming too. Read the component's own flag instead
-				// of the call argument: invalidate() re-runs updateContent(message) without
-				// it, which otherwise made streaming text pop in and disappear again.
-				const isStreaming = this.isStreaming === true;
-				const hideNarration = level === "full" && (this.hasToolCalls === true || isStreaming);
-				const before = container.children
-					.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
-					.join(",");
-				const content = container.children.filter((child) => {
-					if (isQuietNoise(child)) return false;
-					if (hideNarration && isMarkdown(child)) return false;
-					return true;
-				});
-				// Keep one separator row before visible content, nothing for fully hidden messages.
-				container.children = content.length > 0 ? [new Spacer(1), ...content] : [];
-				const after = container.children
-					.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
-					.join(",");
-				const sig = `lvl=${level} streaming=${String(isStreaming)} hasTools=${String(this.hasToolCalls)} before=[${before}] after=[${after}]`;
-				if (this.__qmSig !== sig) {
-					this.__qmSig = sig;
-					debugLog(sig);
-				}
-			} catch {
-				// Filtering failed: keep the original content.
-			}
+			const filter = (globalThis as Record<PropertyKey, unknown>)[FILTER_KEY];
+			if (typeof filter === "function") (filter as (component: unknown) => void)(this);
 		};
 		proto[PATCH_FLAG_KEY] = PATCH_VERSION;
-		debugLog(
-			`patch installed: class=${AssistantMessageComponent?.name} version=${PATCH_VERSION}`,
-		);
+		debugLog(`patch installed: class=${AssistantMessageComponent?.name} version=${PATCH_VERSION}`);
 	} catch {
 		// Component internals changed: skip the patch, rendering stays native.
 	}

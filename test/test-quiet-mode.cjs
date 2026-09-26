@@ -188,9 +188,23 @@ const bashCtx = {
     if (!cond) failed = true;
   };
 
-  // 回归测试：模拟旧版扩展留在原型上的布尔补丁标记（true）。
-  // 新版本必须无视它并重新安装补丁，否则会永远失效。
-  AssistantMessageComponent.prototype[Symbol.for("pi.quiet-mode.patched")] = true;
+  // 回归：模拟旧版 v2 补丁（只处理 hasToolCalls，不管流式）已经挂在原型上。
+  // 新版本必须在其之上重新安装委托壳，并保证最终过滤器是最新的。
+  {
+    const PATCH_FLAG = Symbol.for("pi.quiet-mode.patched");
+    const proto = AssistantMessageComponent.prototype;
+    const previousUpdate = proto.updateContent;
+    proto.updateContent = function (...args) {
+      previousUpdate.apply(this, args);
+      const level = globalThis[Symbol.for("pi.quiet-mode.level")];
+      if (level === "full" && this.hasToolCalls === true && Array.isArray(this.contentContainer?.children)) {
+        this.contentContainer.children = this.contentContainer.children.filter(
+          (child) => (child?.constructor?.name ?? "") !== "Markdown",
+        );
+      }
+    };
+    proto[PATCH_FLAG] = 2;
+  }
 
   // Fresh extension runtime (level off)
   let sink = makeSink();
