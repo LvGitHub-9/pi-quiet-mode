@@ -502,6 +502,25 @@ const bashCtx = {
   // ---- level 3: off ----
   await sink.commands.get("quiet").handler("3", ctx);
   check("level 3 restores plain definitions", sink.tools.get("read").renderShell !== "self");
+  // 回归：安静模式期间创建的旧组件切到关闭档后，Ctrl+O 仍能展开/收起
+  const staleExpanded = readDef
+    .renderResult(
+      { content: [{ type: "text", text: "line1\nline2" }], details: undefined },
+      { expanded: true, isPartial: false },
+      theme,
+      makeRenderCtx(true, { path: "/tmp/a.txt" }),
+    )
+    .render(100);
+  check("level 3: stale quiet rows expand (Ctrl+O)", staleExpanded.length > 0, `rows=${staleExpanded.length}`);
+  const staleCollapsed = readDef
+    .renderResult(
+      { content: [{ type: "text", text: "line1\nline2" }], details: undefined },
+      { expanded: false, isPartial: false },
+      theme,
+      makeRenderCtx(false, { path: "/tmp/a.txt" }),
+    )
+    .render(100);
+  check("level 3: stale quiet rows collapse", staleCollapsed.length === 0, `rows=${staleCollapsed.length}`);
   check("level 3 restores default label", uiState.hiddenThinkingLabel === undefined, String(uiState.hiddenThinkingLabel));
   check("level 3 clears status badge", uiState.status["quiet-mode"] === undefined);
   lines = renderMessage(intermediateMessage, "Thinking...");

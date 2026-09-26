@@ -283,7 +283,10 @@ let partialToolIds = new Set<string>();
 /** How many recent user turns the "recent" cycle step expands. */
 let recentTurns = 1;
 
-function isToolShown(toolCallId: string): boolean {
+function isToolShown(toolCallId: string, contextExpanded: boolean): boolean {
+	// Level 3: components created by earlier quiet modes must behave like native
+	// tool rows again, so defer to the component's own expansion state.
+	if (getLevel() === "off") return contextExpanded;
 	if (toolCycle === 2) return true;
 	if (toolCycle === 1) return partialToolIds.has(toolCallId);
 	return false;
@@ -370,7 +373,7 @@ function makeQuietDefinition(
 		...def,
 		renderShell: "self",
 		renderCall(args, theme, context) {
-			if (!isToolShown(context.toolCallId)) return new Container();
+			if (!isToolShown(context.toolCallId, context.expanded)) return new Container();
 			// The edit renderer draws its own box; every other tool composes call and
 			// result inside the result renderer so they share one native-looking box.
 			const builtIn = builtInRenderers[name]?.renderCall;
@@ -382,7 +385,7 @@ function makeQuietDefinition(
 			return new Container();
 		},
 		renderResult(result, options, theme, context) {
-			if (!isToolShown(context.toolCallId)) {
+			if (!isToolShown(context.toolCallId, context.expanded)) {
 				if (context.isError) {
 					const first = truncate(textOf(result), 100);
 					return new Text(
@@ -407,6 +410,8 @@ function makeQuietDefinition(
 				: context.isError
 					? "toolErrorBg"
 					: "toolSuccessBg";
+			// Whenever the row is shown, render the full (expanded) native view.
+			const shownOptions = { ...options, expanded: true };
 
 			// Fallback that still looks native: same background box, summary + output.
 			const boxedFallback = (): unknown => {
@@ -423,13 +428,13 @@ function makeQuietDefinition(
 				const builtinContext = { ...context, lastComponent: undefined };
 				if (name === "edit" && builtInResult) {
 					logRenderPath(`${name}:builtin`);
-					return builtInResult(result, options, theme, builtinContext) as never;
+					return builtInResult(result, shownOptions, theme, builtinContext) as never;
 				}
 				if (builtInResult) {
 					logRenderPath(`${name}:builtin`);
 					const box = new Box(1, 1, (text: string) => theme.bg(bg, text));
 					if (builtInCall) box.addChild(builtInCall(context.args, theme, builtinContext) as never);
-					box.addChild(builtInResult(result, options, theme, builtinContext) as never);
+					box.addChild(builtInResult(result, shownOptions, theme, builtinContext) as never);
 					return box as never;
 				}
 			} catch (error) {
