@@ -100,22 +100,33 @@ function makePi(sink) {
 }
 
 function makeUiState() {
-  return { workingMessage: "<unset>", hiddenThinkingLabel: "<unset>", status: {}, expanded: undefined };
+  return { workingMessage: "<unset>", hiddenThinkingLabel: "<unset>", status: {}, expanded: undefined, toolsExpandedField: false };
 }
 
-function makeCtx(uiState) {
+function makeCtx(uiState, capture) {
   return {
     mode: "tui",
     hasUI: true,
     cwd: "/tmp/",
     isProjectTrusted: () => false,
+    sessionManager: {
+      getBranch: () => capture?.branch ?? [],
+    },
     ui: {
       theme,
       notify: () => {},
       setWorkingMessage: (message) => (uiState.workingMessage = message),
       setHiddenThinkingLabel: (label) => (uiState.hiddenThinkingLabel = label),
       setStatus: (key, value) => (uiState.status[key] = value),
-      setToolsExpanded: (value) => (uiState.expanded = value),
+      setToolsExpanded: (value) => {
+        uiState.expanded = value;
+        uiState.toolsExpandedField = value;
+      },
+      getToolsExpanded: () => uiState.toolsExpandedField === true,
+      onTerminalInput: (handler) => {
+        if (capture) capture.inputHandler = handler;
+        return () => {};
+      },
     },
   };
 }
@@ -232,7 +243,8 @@ const bashCtx = {
   let sink = makeSink();
   let pi = makePi(sink);
   let uiState = makeUiState();
-  let ctx = makeCtx(uiState);
+  const capture = { branch: [], inputHandler: undefined };
+  let ctx = makeCtx(uiState, capture);
 
   const loadFactory = async () => {
     const mod = await jiti.import(EXT, { default: true });
@@ -245,6 +257,7 @@ const bashCtx = {
   await emitSessionStart(sink, ctx);
   check("registers /quiet command", sink.commands.has("quiet"));
   check("level off leaves built-ins untouched", sink.tools.size === 0, `tools=${sink.tools.size}`);
+  check("level off: Ctrl+O passes through to Pi", capture.inputHandler("\x0f") === undefined);
 
   // ---- level 1: full ----
   await sink.commands.get("quiet").handler("1", ctx);
@@ -288,6 +301,37 @@ const bashCtx = {
     lastComponent: undefined,
     ...extra,
   });
+
+  // ---- Ctrl+O 三档循环（安静模式下接管）----
+  capture.branch = [
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "recent-1" }] } },
+  ];
+  const shownFor = (toolCallId) =>
+    readDef
+      .renderResult(
+        { content: [{ type: "text", text: "x" }], details: undefined },
+        { expanded: false, isPartial: false },
+        theme,
+        makeRenderCtx(false, { path: "/tmp/a.txt" }, { toolCallId }),
+      )
+      .render(100).length > 0;
+
+  check("level 1: Ctrl+O is intercepted", capture.inputHandler("\x0f")?.consume === true);
+  check("cycle 1: recent tool shown", shownFor("recent-1"));
+  check("cycle 1: older tool hidden", !shownFor("old-1"));
+  check(
+    "cycle 1 keeps badge with tools:recent",
+    String(uiState.status["quiet-mode"]).includes("tools:recent"),
+    String(uiState.status["quiet-mode"]),
+  );
+  check("cycle 2: Ctrl+O intercepted again", capture.inputHandler("\x0f")?.consume === true);
+  check("cycle 2: all tools shown", shownFor("recent-1") && shownFor("old-1"));
+  check(
+    "cycle 2 keeps badge with tools:all",
+    String(uiState.status["quiet-mode"]).includes("tools:all"),
+    String(uiState.status["quiet-mode"]),
+  );
+
   const expandedCtx = makeRenderCtx(true, { path: "/tmp/a.txt", limit: 5 });
   check(
     "expanded tool call renders 0 rows (box composed by result)",
@@ -326,6 +370,10 @@ const bashCtx = {
     !!expandedAfterCollapsed && !expandedAfterCollapsed.error && expandedAfterCollapsed.length > 0,
     `rows=${expandedAfterCollapsed?.length ?? "null"}${expandedAfterCollapsed?.error ? " " + expandedAfterCollapsed.error : ""}`,
   );
+
+  // 第三次 Ctrl+O 回到完全隐藏
+  check("cycle 0: Ctrl+O intercepted a third time", capture.inputHandler("\x0f")?.consume === true);
+  check("cycle 0: all tools hidden again", !shownFor("recent-1") && !shownFor("old-1"));
   const errorRows = readDef
     .renderResult(
       { content: [{ type: "text", text: "ENOENT" }], details: undefined },
@@ -459,7 +507,8 @@ const bashCtx = {
   const sink2 = makeSink();
   const pi2 = makePi(sink2);
   const uiState2 = makeUiState();
-  const ctx2 = makeCtx(uiState2);
+  const capture2 = { branch: [], inputHandler: undefined };
+  const ctx2 = makeCtx(uiState2, capture2);
   factory = await loadFactory();
   await factory(pi2);
   await emitSessionStart(sink2, ctx2);
@@ -472,7 +521,8 @@ const bashCtx = {
   const sink3 = makeSink();
   const pi3 = makePi(sink3);
   const uiState3 = makeUiState();
-  const ctx3 = makeCtx(uiState3);
+  const capture3 = { branch: [], inputHandler: undefined };
+  const ctx3 = makeCtx(uiState3, capture3);
   factory = await loadFactory();
   await factory(pi3);
   await emitSessionStart(sink3, ctx3);

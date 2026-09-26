@@ -260,6 +260,45 @@ let builtInRenderers: Record<string, BuiltInRenderer> = {};
 const loggedRenderPaths = new Set<string>();
 const tracedExpansions = new Set<string>();
 
+// Ctrl+O cycle in quiet modes: 0 = tool rows hidden, 1 = only the most recent
+// batch of tool calls expanded, 2 = all tool rows expanded.
+type ToolCycle = 0 | 1 | 2;
+let toolCycle: ToolCycle = 0;
+let partialToolIds = new Set<string>();
+
+function isToolShown(toolCallId: string): boolean {
+	if (toolCycle === 2) return true;
+	if (toolCycle === 1) return partialToolIds.has(toolCallId);
+	return false;
+}
+
+/** Tool call ids of the most recent assistant message that contains tool calls. */
+function computePartialToolIds(ctx: ExtensionContext): Set<string> {
+	const ids = new Set<string>();
+	try {
+		const branch = ctx.sessionManager.getBranch() as Array<{
+			type?: string;
+			message?: { role?: string; content?: unknown };
+		}>;
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
+			const content = entry.message.content;
+			if (!Array.isArray(content)) continue;
+			const calls = content.filter(
+				(part): part is { id: string } =>
+					!!part && typeof part === "object" && (part as { type?: string }).type === "toolCall" && typeof (part as { id?: unknown }).id === "string",
+			);
+			if (calls.length === 0) continue;
+			for (const call of calls) ids.add(call.id);
+			break;
+		}
+	} catch {
+		// Session shape changed: treat everything as non-recent.
+	}
+	return ids;
+}
+
 function logRenderPath(pathKey: string): void {
 	if (loggedRenderPaths.has(pathKey)) return;
 	loggedRenderPaths.add(pathKey);
@@ -300,7 +339,7 @@ function makeQuietDefinition(
 		...def,
 		renderShell: "self",
 		renderCall(args, theme, context) {
-			if (!context.expanded) return new Container();
+			if (!isToolShown(context.toolCallId)) return new Container();
 			// The edit renderer draws its own box; every other tool composes call and
 			// result inside the result renderer so they share one native-looking box.
 			const builtIn = builtInRenderers[name]?.renderCall;
@@ -312,7 +351,7 @@ function makeQuietDefinition(
 			return new Container();
 		},
 		renderResult(result, options, theme, context) {
-			if (!context.expanded) {
+			if (!isToolShown(context.toolCallId)) {
 				if (context.isError) {
 					const first = truncate(textOf(result), 100);
 					return new Text(
@@ -624,18 +663,42 @@ function patchAssistantMessages(): void {
 // UI
 // ---------------------------------------------------------------------------
 
+function updateStatusBadge(ctx: ExtensionContext): void {
+	const info = LEVEL_INFO[getLevel()];
+	if (!info.enabled) {
+		ctx.ui.setStatus(STATUS_KEY, undefined);
+		return;
+	}
+	const suffix = toolCycle === 2 ? " · tools:all" : toolCycle === 1 ? " · tools:recent" : "";
+	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("dim", `${info.badge}${suffix}`));
+}
+
+/** Re-render every tool row and update the badge after the cycle changed. */
+function applyToolCycle(ctx: ExtensionContext): void {
+	if (ctx.mode !== "tui") return;
+	partialToolIds = toolCycle === 1 ? computePartialToolIds(ctx) : new Set();
+	// Force every ToolExecutionComponent to re-render; our renderers decide
+	// visibility from the cycle state, not from the component's expanded flag.
+	ctx.ui.setToolsExpanded(true);
+	ctx.ui.setToolsExpanded(false);
+	updateStatusBadge(ctx);
+}
+
 function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 	if (ctx.mode !== "tui") return;
 	debugLog(`applyUi: level=${level} mode=${ctx.mode}`);
+	// Level switches and reloads start from a clean transcript.
+	toolCycle = 0;
+	partialToolIds = new Set();
 	const info = LEVEL_INFO[level];
 	ctx.ui.setWorkingMessage(info.enabled ? "Thinking..." : undefined);
 	// Hiding the label also triggers updateContent() on existing messages, so the
 	// compaction patch is applied or removed immediately.
 	ctx.ui.setHiddenThinkingLabel(info.enabled ? "" : undefined);
-	ctx.ui.setStatus(STATUS_KEY, info.enabled ? ctx.ui.theme.fg("dim", info.badge) : undefined);
 	if (info.enabled) {
 		ctx.ui.setToolsExpanded(false);
 	}
+	updateStatusBadge(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -675,7 +738,20 @@ export default async function (pi: ExtensionAPI) {
 			try {
 				terminalInputUnsubscribe?.();
 				terminalInputUnsubscribe = ctx.ui.onTerminalInput((data) => {
-					if (data === "\x0f") debugLog("key ctrl+o");
+					// Ctrl+O is reserved for Pi, so an extension shortcut cannot be
+					// registered for it. Input listeners run before the editor, so quiet
+					// modes take the key over and cycle tool visibility instead.
+					if (data === "\x0f" && getLevel() !== "off") {
+						debugLog("key ctrl+o (quiet cycle)");
+						toolCycle = ((toolCycle + 1) % 3) as ToolCycle;
+						try {
+							applyToolCycle(ctx);
+						} catch (error) {
+							debugLog(`tool cycle failed: ${String(error)}`);
+						}
+						return { consume: true };
+					}
+					if (data === "\x0f") debugLog("key ctrl+o (native)");
 					else if (data === "\x14") debugLog("key ctrl+t");
 					return undefined;
 				});
