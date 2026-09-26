@@ -254,6 +254,7 @@ type BuiltInRenderer = {
 
 let builtInRenderers: Record<string, BuiltInRenderer> = {};
 const loggedRenderPaths = new Set<string>();
+const tracedExpansions = new Set<string>();
 
 function logRenderPath(pathKey: string): void {
 	if (loggedRenderPaths.has(pathKey)) return;
@@ -319,9 +320,14 @@ function makeQuietDefinition(
 				return new Container();
 			}
 
-			const renderer = builtInRenderers[name];
+		const renderer = builtInRenderers[name];
 			const builtInCall = renderer?.renderCall;
 			const builtInResult = renderer?.renderResult;
+			const traceKey = `${name}#${context.toolCallId} expanded=${options.expanded}`;
+			if (!tracedExpansions.has(traceKey)) {
+				tracedExpansions.add(traceKey);
+				debugLog(`tool ${traceKey}`);
+			}
 			const bg = options.isPartial
 				? "toolPendingBg"
 				: context.isError
@@ -631,6 +637,19 @@ export default async function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		getOverridableNames(pi);
+		// Raw key tracing (Ctrl+O = 0x0f, Ctrl+T = 0x14) to correlate expansion
+		// glitches reported by users. Never consumes input.
+		if (ctx.mode === "tui") {
+			try {
+				ctx.ui.onTerminalInput((data) => {
+					if (data === "\x0f") debugLog("key ctrl+o");
+					else if (data === "\x14") debugLog("key ctrl+t");
+					return undefined;
+				});
+			} catch {
+				// Best effort.
+			}
+		}
 		if (getLevel() !== "off") {
 			try {
 				ensureTools(pi, ctx, getLevel());
