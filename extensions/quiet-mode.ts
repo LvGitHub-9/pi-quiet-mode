@@ -74,6 +74,10 @@ const STATUS_KEY = "quiet-mode";
 // the current value instead of a stale closure variable.
 const LEVEL_KEY = Symbol.for("pi.quiet-mode.level");
 const PATCH_FLAG_KEY = Symbol.for("pi.quiet-mode.patched");
+// Tracks whether the user explicitly revealed thinking with Ctrl+T in this
+// session. Reset on every load so a reload renders history clean again.
+const REVEAL_KEY = Symbol.for("pi.quiet-mode.thinking-revealed");
+const THINKING_PATCH_KEY = Symbol.for("pi.quiet-mode.thinking-patched");
 // The installed wrapper is a stable shell that delegates to whatever filter this
 // global symbol points at. Every /reload republishes the filter, so the newest
 // implementation always runs even though the wrapper itself is installed once.
@@ -451,6 +455,16 @@ function isInvisibleLabel(child: unknown): boolean {
 	}
 }
 
+/** MouseRegion-wrapped thinking block (label Text or revealed Markdown). */
+function isThinkingBlock(child: unknown): boolean {
+	try {
+		const inner = (child as { child?: { text?: unknown } })?.child;
+		return !!inner && typeof inner.text === "string";
+	} catch {
+		return false;
+	}
+}
+
 function isMarkdown(child: unknown): boolean {
 	try {
 		return (child as { constructor?: { name?: string } })?.constructor?.name === "Markdown";
@@ -479,6 +493,7 @@ function applyQuietFilter(component: {
 		// it, which otherwise made streaming text pop in and disappear again.
 		const isStreaming = component.isStreaming === true;
 		const hideNarration = level === "full" && (component.hasToolCalls === true || isStreaming);
+		const revealed = (globalThis as Record<PropertyKey, unknown>)[REVEAL_KEY] === true;
 		const before = container.children
 			.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")
 			.join(",");
@@ -488,6 +503,9 @@ function applyQuietFilter(component: {
 		// answer instead of gluing them together.
 		const kept = container.children.filter((child) => {
 			if (isInvisibleLabel(child)) return false;
+			// Revealed thinking (the user toggled hideThinkingBlock off, possibly in
+			// an earlier session) stays hidden unless Ctrl+T was pressed in this run.
+			if (!revealed && isThinkingBlock(child)) return false;
 			if (hideNarration && isMarkdown(child)) return false;
 			return true;
 		});
@@ -514,10 +532,31 @@ function applyQuietFilter(component: {
 	}
 }
 
+/** Record explicit Ctrl+T reveals so the filter can distinguish them from restored settings. */
+function patchThinkingToggle(): void {
+	try {
+		const proto = (AssistantMessageComponent as unknown as { prototype?: Record<PropertyKey, unknown> })
+			?.prototype;
+		if (!proto || typeof proto.setHideThinkingBlock !== "function") return;
+		if (proto[THINKING_PATCH_KEY] === PATCH_VERSION) return;
+		const original = proto.setHideThinkingBlock as (hide: boolean) => void;
+		proto.setHideThinkingBlock = function (this: unknown, hide: boolean) {
+			// Set the flag before the original call: it triggers updateContent, and the
+			// filter must already see the new reveal state.
+			(globalThis as Record<PropertyKey, unknown>)[REVEAL_KEY] = hide !== true;
+			original.call(this, hide);
+		};
+		proto[THINKING_PATCH_KEY] = PATCH_VERSION;
+	} catch {
+		// Fail soft: fall back to the persisted hideThinkingBlock behavior.
+	}
+}
+
 function patchAssistantMessages(): void {
 	// Publish the latest filter first: older shells left on the prototype will run
 	// it too, so even a stale wrapper cannot re-introduce old behavior.
 	(globalThis as Record<PropertyKey, unknown>)[FILTER_KEY] = applyQuietFilter;
+	patchThinkingToggle();
 	try {
 		const proto = (AssistantMessageComponent as unknown as { prototype?: Record<PropertyKey, unknown> })
 			?.prototype;
@@ -564,6 +603,10 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 	ctx.ui.setHiddenThinkingLabel(info.enabled ? "" : undefined);
 	ctx.ui.setStatus(STATUS_KEY, info.enabled ? ctx.ui.theme.fg("dim", info.badge) : undefined);
 	if (info.enabled) {
+		// Force a collapse pass: /reload rebuilds components with the previous
+		// expansion state, and setToolsExpanded() early-returns when the flag already
+		// matches, which left rebuilt tool rows expanded and unable to collapse.
+		ctx.ui.setToolsExpanded(true);
 		ctx.ui.setToolsExpanded(false);
 	}
 }
@@ -574,6 +617,9 @@ function applyUi(ctx: ExtensionContext, level: QuietLevel): void {
 
 export default async function (pi: ExtensionAPI) {
 	setLevel(loadLevel());
+	// A reload builds a fresh transcript: history should render clean even when the
+	// persisted hideThinkingBlock setting leaves thinking visible from an earlier peek.
+	(globalThis as Record<PropertyKey, unknown>)[REVEAL_KEY] = false;
 	// Legacy cleanup: very early builds used a boolean flag under a different key
 	// and kept stripping spacer rows whenever it was true — even in level 3. That
 	// leftover wrapper is still installed on the component prototype in long-lived

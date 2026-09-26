@@ -357,6 +357,16 @@ const bashCtx = {
     streamingComponent.render(100).some((line) => line.includes("This is the answer")),
   );
 
+  // 回归：reload 重建的历史消息即使因持久化设置而“可见”，安静模式下也必须隐藏
+  // （除非本次会话按过 Ctrl+T）
+  const restoredThinking = new AssistantMessageComponent(textMessage, false, undefined, "", 1, []);
+  const restoredLines = restoredThinking.render(100);
+  check(
+    "level 1 hides restored thinking after reload",
+    !restoredLines.some((line) => line.includes("internal reasoning")),
+    `lines=${restoredLines.length}`,
+  );
+
   // Ctrl+T（app.thinking.toggle）：展开/收起思考块
   const thinkingComponent = new AssistantMessageComponent(intermediateMessage, true, undefined, "", 1, []);
   check(
