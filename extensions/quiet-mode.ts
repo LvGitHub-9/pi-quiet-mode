@@ -422,7 +422,12 @@ function patchAssistantMessages(): void {
 
 		const original = proto.updateContent as (...args: unknown[]) => void;
 		proto.updateContent = function (
-			this: { contentContainer?: { children?: unknown[] }; hasToolCalls?: boolean; __qmSig?: string },
+			this: {
+				contentContainer?: { children?: unknown[] };
+				hasToolCalls?: boolean;
+				isStreaming?: boolean;
+				__qmSig?: string;
+			},
 			...args: unknown[]
 		) {
 			original.apply(this, args);
@@ -431,10 +436,10 @@ function patchAssistantMessages(): void {
 			try {
 				const container = this.contentContainer;
 				if (!container || !Array.isArray(container.children)) return;
-				// updateContent(message, isStreaming): in full mode hide narration while
-				// streaming too, otherwise text appears and then vanishes when the tool
-				// call arrives. The final answer is shown once the message is complete.
-				const isStreaming = args[1] === true;
+				// Hide narration while streaming too. Read the component's own flag instead
+				// of the call argument: invalidate() re-runs updateContent(message) without
+				// it, which otherwise made streaming text pop in and disappear again.
+				const isStreaming = this.isStreaming === true;
 				const hideNarration = level === "full" && (this.hasToolCalls === true || isStreaming);
 				const before = container.children
 					.map((c) => (c as { constructor?: { name?: string } })?.constructor?.name ?? "?")

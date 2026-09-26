@@ -287,6 +287,10 @@ const bashCtx = {
   const streamingComponent = new AssistantMessageComponent(undefined, true, undefined, "", 1, []);
   streamingComponent.updateContent(textMessage, true);
   check("level 1 hides streaming text (no flash)", streamingComponent.render(100).length === 0);
+  // invalidate() re-runs updateContent(message) without the streaming argument;
+  // the text must stay hidden (this was the flash-then-disappear bug).
+  streamingComponent.updateContent(textMessage);
+  check("level 1 stays hidden on invalidate-style update", streamingComponent.render(100).length === 0);
   streamingComponent.updateContent(textMessage, false);
   check(
     "level 1 shows text once the message completes",
