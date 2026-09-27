@@ -2,6 +2,8 @@
 
 **Three-level quiet mode for [Pi](https://pi.dev).** Keep tool noise out of the way without losing sight of the work.
 
+**English** | [中文](README.zh-CN.md)
+
 Pi's default transcript shows every tool call, every result, and a `Thinking...` label for each hidden thinking block. That is great while debugging and distracting the rest of the time. This extension adds a `/quiet` switch with three levels.
 
 ## Levels
@@ -79,23 +81,7 @@ The test runs the real extension through Pi's own `jiti` loader with a mocked AP
 
 ## 中文说明
 
-**三级安静模式：**
-
-| 等级 | 命令 | 效果 |
-|------|------|------|
-| **1 完全安静** | `/quiet 1` | 工具、中间过程、思考标签全部隐藏，只保留输入框旁的 `Thinking...` 和最终结果，界面最干净 |
-| **2 部分安静** | `/quiet 2` | 工具细节隐藏，但每步保留一句话说明（在做什么/发现什么/下一步），可以跟着看干活过程 |
-| **3 关闭** | `/quiet 3` | 恢复 Pi 原生显示 |
-
-- `/quiet` 不带参数循环切换：关闭 → 1 → 2 → 关闭
-- 状态栏显示当前档位（`quiet:1`、`quiet:2`），重启后保持
-- **`Ctrl+O` 三档循环**（安静模式下）：全隐藏 → 最近 N 个用户轮次的工具 → 全部工具 → 全隐藏
-- **`/quiet recent 3`**：设置“最近”包含几个用户轮次（1–20，默认 1）；一批 = 一次用户输入触发的全部工具调用
-- **`Ctrl+T`** 偷看思考：仅本次会话有效，reload 后历史自动恢复干净
-- 工具报错始终保留一行红字，避免静默失败
-- 重新注册内置工具时会完整保留用户的设置（`shellPath` 等），不会影响 bash 正常运行
-
-安装：`pi install npm:pi-quiet-mode` 或 `pi install git:github.com/LvGitHub-9/pi-quiet-mode`
+完整中文文档见 **[README.zh-CN.md](README.zh-CN.md)**。
 
 ## License
 
