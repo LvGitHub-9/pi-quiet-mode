@@ -18,7 +18,21 @@ const { execSync } = require("node:child_process");
 
 const EXT = path.resolve(__dirname, "..", "extensions", "quiet-mode.ts");
 const TMP = path.join(require("node:os").tmpdir(), "pi-quiet-mode-test");
-const SHELL_PATH = "bash";
+// Resolve bash at runtime. A hard-coded install path only ever worked on one
+// machine. Override with PI_TEST_BASH, otherwise ask where/which for bash.
+function resolveBash() {
+  if (process.env.PI_TEST_BASH) return process.env.PI_TEST_BASH;
+  if (process.env.SHELL && fs.existsSync(process.env.SHELL)) return process.env.SHELL;
+  const finder = process.platform === "win32" ? "where" : "which";
+  try {
+    const first = execSync(`${finder} bash`, { encoding: "utf8" }).split(/\r?\n/)[0].trim();
+    if (first && fs.existsSync(first)) return first;
+  } catch {
+    /* not found on PATH; fall back below */
+  }
+  return "bash";
+}
+const SHELL_PATH = resolveBash();
 
 function resolvePiPackage() {
   const candidates = [];
