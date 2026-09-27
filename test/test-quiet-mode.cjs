@@ -107,7 +107,7 @@ function makeCtx(uiState, capture) {
   return {
     mode: "tui",
     hasUI: true,
-    cwd: "/tmp/",
+    cwd: TMP,
     isProjectTrusted: () => false,
     reload: async () => {
       if (capture) capture.reloadCount = (capture.reloadCount ?? 0) + 1;
@@ -186,7 +186,7 @@ const intermediateMessage = {
 };
 
 const bashCtx = {
-  cwd: "/tmp/",
+  cwd: TMP,
   model: undefined,
   thinkingLevel: undefined,
   sessionManager: { getSessionId: () => "test-session", getSessionFile: () => undefined },
@@ -277,7 +277,7 @@ const bashCtx = {
   check("quiet definition keeps parameters", !!readDef.parameters && typeof readDef.parameters === "object");
   check(
     "collapsed tool call renders 0 rows",
-    readDef.renderCall({ path: "/tmp/a.txt" }, theme, { expanded: false, isError: false }).render(100).length === 0,
+    readDef.renderCall({ path: path.join(TMP, "a.txt") }, theme, { expanded: false, isError: false }).render(100).length === 0,
   );
   check(
     "collapsed tool result renders 0 rows",
@@ -297,7 +297,7 @@ const bashCtx = {
     isPartial: false,
     state: {},
     showImages: false,
-    cwd: "/tmp/",
+    cwd: TMP,
     argsComplete: true,
     executionStarted: true,
     invalidate: () => {},
@@ -316,7 +316,7 @@ const bashCtx = {
         { content: [{ type: "text", text: "x" }], details: undefined },
         { expanded: false, isPartial: false },
         theme,
-        makeRenderCtx(false, { path: "/tmp/a.txt" }, { toolCallId }),
+        makeRenderCtx(false, { path: path.join(TMP, "a.txt") }, { toolCallId }),
       )
       .render(100).length > 0;
 
@@ -336,10 +336,10 @@ const bashCtx = {
     String(uiState.status["quiet-mode"]),
   );
 
-  const expandedCtx = makeRenderCtx(true, { path: "/tmp/a.txt", limit: 5 });
+  const expandedCtx = makeRenderCtx(true, { path: path.join(TMP, "a.txt"), limit: 5 });
   check(
     "expanded tool call renders 0 rows (box composed by result)",
-    readDef.renderCall({ path: "/tmp/a.txt", limit: 5 }, theme, expandedCtx).render(100).length === 0,
+    readDef.renderCall({ path: path.join(TMP, "a.txt"), limit: 5 }, theme, expandedCtx).render(100).length === 0,
   );
   const expandedRows = readDef
     .renderResult(
@@ -355,8 +355,8 @@ const bashCtx = {
   // context.lastComponent). Expanding must not throw when builtin renderers reuse it.
   let expandedAfterCollapsed = null;
   try {
-    const collapsedCall = readDef.renderCall({ path: "/tmp/a.txt" }, theme, makeRenderCtx(false, { path: "/tmp/a.txt" }));
-    const reuseCtx = makeRenderCtx(true, { path: "/tmp/a.txt" });
+    const collapsedCall = readDef.renderCall({ path: path.join(TMP, "a.txt") }, theme, makeRenderCtx(false, { path: path.join(TMP, "a.txt") }));
+    const reuseCtx = makeRenderCtx(true, { path: path.join(TMP, "a.txt") });
     reuseCtx.lastComponent = collapsedCall;
     expandedAfterCollapsed = readDef
       .renderResult(
@@ -514,7 +514,7 @@ const bashCtx = {
       { content: [{ type: "text", text: "line1\nline2" }], details: undefined },
       { expanded: true, isPartial: false },
       theme,
-      makeRenderCtx(true, { path: "/tmp/a.txt" }),
+      makeRenderCtx(true, { path: path.join(TMP, "a.txt") }),
     )
     .render(100);
   check("level 3: stale quiet rows expand (Ctrl+O)", staleExpanded.length > 0, `rows=${staleExpanded.length}`);
@@ -523,7 +523,7 @@ const bashCtx = {
       { content: [{ type: "text", text: "line1\nline2" }], details: undefined },
       { expanded: false, isPartial: false },
       theme,
-      makeRenderCtx(false, { path: "/tmp/a.txt" }),
+      makeRenderCtx(false, { path: path.join(TMP, "a.txt") }),
     )
     .render(100);
   check("level 3: stale quiet rows collapse", staleCollapsed.length === 0, `rows=${staleCollapsed.length}`);
