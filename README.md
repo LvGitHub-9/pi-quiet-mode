@@ -23,7 +23,7 @@ In quiet levels **`Ctrl+O` cycles tool visibility**: hidden → tools from the r
 pi install npm:pi-quiet-mode
 
 # Straight from git
-pi install git:github.com/<you>/pi-quiet-mode
+pi install git:github.com/LvGitHub-9/pi-quiet-mode
 
 # Local checkout for development
 pi install /path/to/pi-quiet-mode
@@ -95,7 +95,7 @@ The test runs the real extension through Pi's own `jiti` loader with a mocked AP
 - 工具报错始终保留一行红字，避免静默失败
 - 重新注册内置工具时会完整保留用户的设置（`shellPath` 等），不会影响 bash 正常运行
 
-安装：`pi install npm:pi-quiet-mode` 或 `pi install git:github.com/<you>/pi-quiet-mode`
+安装：`pi install npm:pi-quiet-mode` 或 `pi install git:github.com/LvGitHub-9/pi-quiet-mode`
 
 ## License
 

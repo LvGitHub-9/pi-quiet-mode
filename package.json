@@ -10,6 +10,15 @@
     "tui"
   ],
   "license": "MIT",
+  "author": "Lv",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LvGitHub-9/pi-quiet-mode.git"
+  },
+  "homepage": "https://github.com/LvGitHub-9/pi-quiet-mode#readme",
+  "bugs": {
+    "url": "https://github.com/LvGitHub-9/pi-quiet-mode/issues"
+  },
   "files": [
     "extensions",
     "README.md",
